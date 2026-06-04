@@ -220,7 +220,7 @@ def should_finish_require_live(task: str) -> bool:
 def looks_live_success(reason: str, current_state: str, experience_note: str) -> bool:
     text = f"{reason} {current_state} {experience_note}".lower()
     success_words = ["已开播", "开播成功", "直播中", "正在直播", "live now", "you are live", "直播已开始"]
-    false_words = ["live info", "确认页", "开播前", "未开播", "还未开播", "不能进入", "不能开播", "黑屏"]
+    false_words = ["live info", "确认页", "开播前", "未开播", "还未开播", "不能进入", "不能开播"]
     return any(word in text for word in success_words) and not any(word in text for word in false_words)
 
 
@@ -301,8 +301,9 @@ def role_strategy(role: str, task: str) -> str:
         return (
             "这是游戏主播任务。开播前的必要内容是至少一个游戏源/游戏捕获/游戏窗口源；摄像头是可选项。"
             "必须先确认或添加游戏源；如果没有可捕获游戏窗口，请请求人工协助打开游戏。"
-            "摄像头添加失败或无设备可以记录并跳过。确认画布已有游戏内容后，才进入 Go LIVE 流程。"
-            "如果已经添加 Game Capture/Full-screen app 但画布黑屏或提示无法捕获，不要立即结束，先聚焦一次游戏窗口再切回 Live Studio 复查。"
+            "添加游戏源时优先尝试手动选择具体游戏进程/游戏窗口，其次才使用 Any full-screen game/自动捕获全屏游戏。"
+            "摄像头添加失败或无设备可以记录并跳过。确认已经添加游戏源后即可进入 Go LIVE 流程。"
+            "如果已经添加 Game Capture/Full-screen app 但画布黑屏或提示无法捕获，先聚焦一次游戏窗口再切回 Live Studio 复查；如果仍异常，把它记录为体验问题，但不要因此终止开播流程。"
             "如果任务包含完成开播，必须继续到主界面 Go LIVE、Live info 确认页、最终 Go LIVE，并看到直播中/开播成功后才算完成。"
         )
     if any(word in text for word in ["秀场", "show", "camera", "摄像头"]):
@@ -333,10 +334,10 @@ def build_step_prompt(task: str, role: str, role_text: str, strategy: str, histo
 要求：
 1. 先理解当前页面和任务缺口，再决定下一步，不要机械寻找某个固定按钮。
 2. 动作只能是 click、type、key、wait、focus_game_then_live_studio。
-3. 游戏主播任务：未确认游戏源前不能进入 Go LIVE；找不到游戏窗口时 need_human=true。
+3. 游戏主播任务：未添加游戏源前不能进入 Go LIVE；找不到游戏窗口时 need_human=true。添加游戏源时优先手动选择具体游戏进程/游戏窗口，其次才用 Any full-screen game/自动捕获。
 4. 秀场主播任务：未确认摄像头源前不能进入 Go LIVE；没有摄像头设备时 need_human=true。
 5. 摄像头对游戏主播是可选项，失败可记录并跳过。
-6. 游戏源已添加但画布仍黑屏、无游戏画面、或提示 Couldn't capture / closed / not captured 时，优先输出 action.type="focus_game_then_live_studio"，让工具聚焦游戏窗口后再切回 Live Studio 复查；只有聚焦复查后仍失败，才 need_human=true。
+6. 游戏源已添加但画布仍黑屏、无游戏画面、或提示 Couldn't capture / closed / not captured 时，优先输出 action.type="focus_game_then_live_studio"，让工具聚焦游戏窗口后再切回 Live Studio 复查；如果复查后仍失败，把它记录为体验问题，但继续 Go LIVE 流程，不要因为黑屏终止任务。
 7. 点击主界面 Go LIVE 只是进入开播前确认；Live info 中还要理解标题、topic、封面、About me 和直播设置。
 8. allow_go_live={allow_go_live}；如果为 false，遇到最终真实开播确认必须请求人工协助。
 9. 如果任务包含“开播/完成游戏开播/Go LIVE/直播”，只有明确看到直播中/开播成功，才 done=true；只完成添加源、进入 Live info、或点击主界面 Go LIVE 都不能 done=true。
@@ -379,6 +380,7 @@ def build_report_prompt(task: str, role: str, role_text: str, history: list[dict
 2. 尽可能多发现体验问题，但必须基于日志事实。每个问题都给标题、严重级别、问题描述、用户影响、证据截图路径、建议。
 3. 重点评价新手游戏主播会不会理解：当前是否已经准备好、游戏画面是否被观众看到、默认值是否合理、错误提示是否能指导下一步、按钮/入口是否明确、等待/加载是否有反馈。
 4. 至少输出 5 个候选体验问题；如果日志事实不足 5 个，说明哪些是“观察不足/需补测”，不要硬编。
+5. 如果最终已经走完开播流程，体验可以结束；游戏源黑屏/捕获失败应作为问题写进报告，而不是作为继续反复修复的理由。
 
 报告结构：
 1. 用户人设与关注清单
