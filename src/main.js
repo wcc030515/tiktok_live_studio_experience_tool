@@ -1276,6 +1276,7 @@ async function startVisionTask(config) {
     steps: 0,
     logFile: path.join(dir, "task.log"),
     reportFile: path.join(dir, "report.md"),
+    humanSignalFile: path.join(dir, "human.done"),
     child: null
   };
   activeRun = run;
@@ -1302,6 +1303,7 @@ async function startVisionTask(config) {
     "--role-file", selected?.file || "",
     "--window-title", "TikTok LIVE Studio",
     "--max-steps", String(config.maxSteps || 60),
+    "--human-signal", run.humanSignalFile,
     "--provider", config.aiProvider || "codex"
   ];
   if ((config.aiProvider || "codex") === "codex") {
@@ -1332,6 +1334,13 @@ async function startVisionTask(config) {
       try {
         const row = JSON.parse(line);
         if (row.event === "action") run.steps += 1;
+        if (row.event === "ask_human") {
+          run.waitingForHuman = true;
+          showInspectorWindow();
+        }
+        if (row.event === "done" && run.waitingForHuman) {
+          run.waitingForHuman = false;
+        }
         await appendLog(run, mapVisionEventType(row.event), row.message || row.event);
       } catch {
         await appendLog(run, "observe", line.slice(0, 500));
@@ -1423,6 +1432,9 @@ ipcMain.handle("task:stop", async () => {
 });
 ipcMain.handle("task:humanDone", async () => {
   if (activeRun?.waitingForHuman) {
+    if (activeRun.humanSignalFile) {
+      await fs.writeFile(activeRun.humanSignalFile, String(Date.now()), "utf8").catch(() => {});
+    }
     activeRun.resumeHuman?.();
     return { ok: true };
   }

@@ -197,6 +197,17 @@ def fallback_report(task: str, role: str, action_log: list[dict[str, Any]], erro
     return "\n".join(lines) + "\n"
 
 
+def wait_for_human_signal(signal_path: Path, message: str) -> None:
+    emit("ask_human", message)
+    while not signal_path.exists():
+        time.sleep(0.5)
+    try:
+        signal_path.unlink()
+    except OSError:
+        pass
+    emit("done", "人工协助已完成，重新截图判断")
+
+
 def to_abs(wl: int, wt: int, scale: float, x: float, y: float) -> tuple[int, int]:
     return int(wl + x / scale), int(wt + y / scale)
 
@@ -331,6 +342,9 @@ def build_step_prompt(task: str, role: str, role_text: str, strategy: str, histo
 9. 如果任务包含“开播/完成游戏开播/Go LIVE/直播”，只有明确看到直播中/开播成功，才 done=true；只完成添加源、进入 Live info、或点击主界面 Go LIVE 都不能 done=true。
 10. 每一步都要从角色视角记录体验观察，包括主界面信息密度、入口理解、弹窗文案、默认值、加载等待、画布反馈、异常提示是否可理解。
 11. 不确定的界面元素标注“不确定”，不要编造。
+12. 游戏源已添加但画布黑屏/捕获失败是体验问题，不是终止任务的理由；聚焦重试或人工协助后仍异常，也要继续完成 Go LIVE 开播流程。
+13. 当 need_human=true 时，工具会等待用户点击“已完成人工协助”；点击后必须基于下一张新截图重新判断当前状态，不要沿用旧截图结论。
+14. “完成游戏开播/完成 Go LIVE”的任务目标优先级高于画布质量门槛；画面异常写进报告，但仍继续开播。
 
 只输出 JSON：
 {{
@@ -381,6 +395,7 @@ def run(args: argparse.Namespace) -> int:
     load_dotenv(root / ".env")
     run_dir = Path(args.run_dir).resolve()
     screenshots_dir = run_dir / "screenshots"
+    human_signal = Path(args.human_signal).resolve() if args.human_signal else run_dir / "human.done"
     screenshots_dir.mkdir(parents=True, exist_ok=True)
 
     if not is_admin():
@@ -432,8 +447,9 @@ def run(args: argparse.Namespace) -> int:
 
             if data.get("need_human"):
                 action_log.append({"step": step, "summary": f"请求人工协助：{reason}", "current_state": current_state, "experience_note": experience_note, "screenshot": str(img_path)})
-                emit("ask_human", reason or "需要人工协助")
-                break
+                wait_for_human_signal(human_signal, reason or "需要人工协助")
+                time.sleep(STEP_SLEEP_SEC)
+                continue
 
             if data.get("done"):
                 if should_finish_require_live(args.task) and not looks_live_success(reason, current_state, experience_note):
@@ -492,6 +508,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--allow-go-live", action="store_true")
     parser.add_argument("--provider", choices=["codex", "mimo"], default="codex")
     parser.add_argument("--codex-path", default="")
+    parser.add_argument("--human-signal", default="")
     parser.add_argument("--mimo-base-url", default=DEFAULT_MIMO_BASE_URL)
     parser.add_argument("--mimo-model", default=DEFAULT_MIMO_MODEL)
     parser.add_argument("--mimo-api-key", default="")
