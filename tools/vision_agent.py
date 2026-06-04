@@ -201,7 +201,61 @@ def to_abs(wl: int, wt: int, scale: float, x: float, y: float) -> tuple[int, int
     return int(wl + x / scale), int(wt + y / scale)
 
 
-def execute_action(action: dict[str, Any], scale: float, wl: int, wt: int) -> str:
+def should_finish_require_live(task: str) -> bool:
+    text = task.lower()
+    return any(word in text for word in ["开播", "直播", "go live", "live", "完成一次开播", "完成游戏开播"])
+
+
+def looks_live_success(reason: str, current_state: str, experience_note: str) -> bool:
+    text = f"{reason} {current_state} {experience_note}".lower()
+    success_words = ["已开播", "开播成功", "直播中", "正在直播", "live now", "you are live", "直播已开始"]
+    false_words = ["live info", "确认页", "开播前", "未开播", "还未开播", "不能进入", "不能开播", "黑屏"]
+    return any(word in text for word in success_words) and not any(word in text for word in false_words)
+
+
+def focus_game_then_live_studio(live_title: str) -> str:
+    live_key = live_title.lower()
+    blocked_keywords = [
+        "live studio",
+        "codex",
+        "chrome",
+        "edge",
+        "feishu",
+        "lark",
+        "explorer",
+        "powershell",
+        "terminal",
+        "visual studio code",
+    ]
+    candidates = []
+    for window in gw.getAllWindows():
+        title = (window.title or "").strip()
+        if not title:
+            continue
+        lower = title.lower()
+        if live_key in lower or any(word in lower for word in blocked_keywords):
+            continue
+        try:
+            if window.width < 160 or window.height < 120:
+                continue
+        except Exception:
+            continue
+        candidates.append(window)
+    if not candidates:
+        raise RuntimeError("未找到可聚焦的游戏窗口，请先打开游戏并保持窗口可见")
+
+    game = max(candidates, key=lambda item: int(getattr(item, "width", 0)) * int(getattr(item, "height", 0)))
+    activate_window(game)
+    time.sleep(2.0)
+    live = find_window(live_title)
+    if live is None:
+        raise RuntimeError("已聚焦游戏窗口，但无法找回 Live Studio 窗口")
+    activate_window(live)
+    time.sleep(1.0)
+    return f"已聚焦疑似游戏窗口「{game.title}」并切回 Live Studio 复查捕获画面"
+
+
+def execute_action(action: dict[str, Any], scale: float, wl: int, wt: int, live_title: str) -> str:
     atype = action.get("type")
     if atype == "click":
         abs_x, abs_y = to_abs(wl, wt, scale, float(action["x"]), float(action["y"]))
@@ -225,6 +279,8 @@ def execute_action(action: dict[str, Any], scale: float, wl: int, wt: int) -> st
         sec = max(0.5, min(10, float(action.get("seconds", 1))))
         time.sleep(sec)
         return f"等待 {sec:g} 秒"
+    if atype == "focus_game_then_live_studio":
+        return focus_game_then_live_studio(live_title)
     return f"忽略不支持动作：{atype}"
 
 
@@ -235,6 +291,8 @@ def role_strategy(role: str, task: str) -> str:
             "这是游戏主播任务。开播前的必要内容是至少一个游戏源/游戏捕获/游戏窗口源；摄像头是可选项。"
             "必须先确认或添加游戏源；如果没有可捕获游戏窗口，请请求人工协助打开游戏。"
             "摄像头添加失败或无设备可以记录并跳过。确认画布已有游戏内容后，才进入 Go LIVE 流程。"
+            "如果已经添加 Game Capture/Full-screen app 但画布黑屏或提示无法捕获，不要立即结束，先聚焦一次游戏窗口再切回 Live Studio 复查。"
+            "如果任务包含完成开播，必须继续到主界面 Go LIVE、Live info 确认页、最终 Go LIVE，并看到直播中/开播成功后才算完成。"
         )
     if any(word in text for word in ["秀场", "show", "camera", "摄像头"]):
         return (
@@ -263,14 +321,16 @@ def build_step_prompt(task: str, role: str, role_text: str, strategy: str, histo
 
 要求：
 1. 先理解当前页面和任务缺口，再决定下一步，不要机械寻找某个固定按钮。
-2. 动作只能是 click、type、key、wait。
+2. 动作只能是 click、type、key、wait、focus_game_then_live_studio。
 3. 游戏主播任务：未确认游戏源前不能进入 Go LIVE；找不到游戏窗口时 need_human=true。
 4. 秀场主播任务：未确认摄像头源前不能进入 Go LIVE；没有摄像头设备时 need_human=true。
 5. 摄像头对游戏主播是可选项，失败可记录并跳过。
-6. 点击主界面 Go LIVE 只是进入开播前确认；Live info 中还要理解标题、topic、封面、About me 和直播设置。
-7. allow_go_live={allow_go_live}；如果为 false，遇到最终真实开播确认必须请求人工协助。
-8. 只有明确看到直播中/开播成功，才 done=true。
-9. 不确定的界面元素标注“不确定”，不要编造。
+6. 游戏源已添加但画布仍黑屏、无游戏画面、或提示 Couldn't capture / closed / not captured 时，优先输出 action.type="focus_game_then_live_studio"，让工具聚焦游戏窗口后再切回 Live Studio 复查；只有聚焦复查后仍失败，才 need_human=true。
+7. 点击主界面 Go LIVE 只是进入开播前确认；Live info 中还要理解标题、topic、封面、About me 和直播设置。
+8. allow_go_live={allow_go_live}；如果为 false，遇到最终真实开播确认必须请求人工协助。
+9. 如果任务包含“开播/完成游戏开播/Go LIVE/直播”，只有明确看到直播中/开播成功，才 done=true；只完成添加源、进入 Live info、或点击主界面 Go LIVE 都不能 done=true。
+10. 每一步都要从角色视角记录体验观察，包括主界面信息密度、入口理解、弹窗文案、默认值、加载等待、画布反馈、异常提示是否可理解。
+11. 不确定的界面元素标注“不确定”，不要编造。
 
 只输出 JSON：
 {{
@@ -286,7 +346,7 @@ def build_step_prompt(task: str, role: str, role_text: str, strategy: str, histo
 
 def build_report_prompt(task: str, role: str, role_text: str, history: list[dict[str, Any]]) -> str:
     facts = "\n".join(
-        f"- Step {item['step']}: {item['summary']} | 状态：{item.get('current_state','')} | 体验：{item.get('experience_note','')}"
+        f"- Step {item['step']}: {item['summary']} | 状态：{item.get('current_state','')} | 体验：{item.get('experience_note','')} | 截图：{item.get('screenshot','')}"
         for item in history
     ) or "- 无"
     return f"""
@@ -300,12 +360,18 @@ def build_report_prompt(task: str, role: str, role_text: str, history: list[dict
 真实操作日志：
 {facts}
 
+报告要求：
+1. 报告不能只写最终阻断点。即使任务未完整完成，也要覆盖已经真实体验过的每个阶段：主界面、添加源入口、源选择页、Game Capture 设置页、添加后画布效果、Go LIVE/Live info（如果到达）。
+2. 尽可能多发现体验问题，但必须基于日志事实。每个问题都给标题、严重级别、问题描述、用户影响、证据截图路径、建议。
+3. 重点评价新手游戏主播会不会理解：当前是否已经准备好、游戏画面是否被观众看到、默认值是否合理、错误提示是否能指导下一步、按钮/入口是否明确、等待/加载是否有反馈。
+4. 至少输出 5 个候选体验问题；如果日志事实不足 5 个，说明哪些是“观察不足/需补测”，不要硬编。
+
 报告结构：
 1. 用户人设与关注清单
-2. 任务概述
-3. 认知演变记录
-4. 体验过程分析
-5. 问题与建议汇总
+2. 任务完成度与关键结论
+3. 分阶段体验过程分析
+4. 问题列表（含截图证据路径）
+5. 体验亮点
 6. 总体评估与 Top 3 建议
 """
 
@@ -334,7 +400,7 @@ def run(args: argparse.Namespace) -> int:
     final_img: Image.Image | None = None
 
     pyautogui.FAILSAFE = True
-    with mss.mss() as sct:
+    with mss.MSS() as sct:
         for step in range(1, args.max_steps + 1):
             activate_window(win)
             img_path = screenshots_dir / f"step_{step:02d}.png"
@@ -370,6 +436,12 @@ def run(args: argparse.Namespace) -> int:
                 break
 
             if data.get("done"):
+                if should_finish_require_live(args.task) and not looks_live_success(reason, current_state, experience_note):
+                    summary = f"拒绝过早结束：任务要求完成开播，但当前未确认直播中/开播成功。模型理由：{reason}"
+                    action_log.append({"step": step, "summary": summary, "current_state": current_state, "experience_note": experience_note, "screenshot": str(img_path)})
+                    emit("warn", summary)
+                    time.sleep(STEP_SLEEP_SEC)
+                    continue
                 success = True
                 action_log.append({"step": step, "summary": f"任务完成：{reason}", "current_state": current_state, "experience_note": experience_note, "screenshot": str(img_path)})
                 emit("done", reason or "任务完成")
@@ -383,7 +455,7 @@ def run(args: argparse.Namespace) -> int:
                 time.sleep(STEP_SLEEP_SEC)
                 continue
 
-            summary = execute_action(action, scale, wl, wt)
+            summary = execute_action(action, scale, wl, wt, args.window_title)
             action_log.append({"step": step, "summary": summary, "current_state": current_state, "experience_note": experience_note, "screenshot": str(img_path), "action": action})
             emit("done", summary)
             time.sleep(STEP_SLEEP_SEC)

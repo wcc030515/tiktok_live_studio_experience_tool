@@ -1227,15 +1227,23 @@ async function readVisionResult(run) {
   }
   const result = JSON.parse(await fs.readFile(resultFile, "utf8"));
   const actions = Array.isArray(result.action_log) ? result.action_log : [];
+  const issueKeywords = /请求人工协助|失败|无法|未能|错误|不确定|黑屏|缺少|困惑|不清楚|不明确|担心|焦虑|不敢|成本|提示|入口|默认|等待|加载/;
   const issues = actions
-    .filter((item) => /请求人工协助|失败|无法|未能|错误|不确定/.test(String(item.summary || item.experience_note || "")))
-    .slice(0, 8)
-    .map((item) => ({
-      title: String(item.summary || "体验问题").slice(0, 60),
-      severity: /请求人工协助|失败|无法|错误/.test(String(item.summary || "")) ? "Major" : "Minor",
-      description: String(item.experience_note || item.current_state || item.summary || "详见本地报告。"),
-      screenshot: item.screenshot || null
-    }));
+    .filter((item) => issueKeywords.test(String(`${item.summary || ""} ${item.experience_note || ""} ${item.current_state || ""}`)))
+    .slice(0, 10)
+    .map((item, index) => {
+      const summary = String(item.summary || "");
+      const note = String(item.experience_note || "");
+      const state = String(item.current_state || "");
+      const blocking = /请求人工协助|失败|无法|未能|错误|黑屏/.test(`${summary} ${state}`);
+      const titleSource = blocking ? summary : note || state || summary;
+      return {
+        title: String(titleSource || `体验观察 ${index + 1}`).replace(/\s+/g, " ").slice(0, 64),
+        severity: blocking ? "Major" : "Minor",
+        description: note || state || summary || "详见本地报告。",
+        screenshot: item.screenshot || null
+      };
+    });
   if (issues.length === 0) {
     issues.push({
       title: result.success ? "未发现明确阻塞问题" : "任务未完整完成",
