@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Live Studio AI Inspector</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <main class="app-shell">
+    <section class="screen active" id="prepare">
+      <div class="content">
+        <div class="stack">
+          <section class="panel">
+            <div class="panel-head">
+              <h1>任务配置</h1>
+              <span class="pill ok" id="ready-pill">就绪</span>
+            </div>
+            <div class="panel-body">
+              <label for="task">任务描述</label>
+              <textarea id="task" placeholder="请输入任务，如以萌新游戏主播的身份完成 Live Studio 首次开播流程，重点关注入口理解、配置负担、加载等待和异常反馈，输出体验报告。"></textarea>
+
+              <div class="field-row">
+                <div>
+                  <label>报告类型</label>
+                  <div class="segmented" id="report-type">
+                    <button class="active" type="button" data-value="体验报告">体验报告</button>
+                    <button type="button" data-value="验收报告">验收报告</button>
+                  </div>
+                </div>
+                <div class="field-with-action">
+                  <div>
+                    <label for="role">执行角色</label>
+                    <select id="role"></select>
+                  </div>
+                  <button class="btn" id="open-roles" type="button">角色目录</button>
+                </div>
+              </div>
+
+              <div class="field-row">
+                <div>
+                  <label for="max-steps">最多操作步数</label>
+                  <input id="max-steps" type="number" min="5" max="80" value="30" />
+                </div>
+                <div>
+                  <label for="interval">截图读屏间隔</label>
+                  <select id="interval">
+                    <option value="0.5">0.5 秒</option>
+                    <option value="1" selected>1 秒</option>
+                    <option value="1.5">1.5 秒</option>
+                    <option value="2">2 秒</option>
+                    <option value="3">3 秒</option>
+                    <option value="5">5 秒</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="check-row">
+                <label class="check-line">
+                  <input id="allow-live" type="checkbox" checked />
+                  <span>允许 AI 执行真实开播操作</span>
+                </label>
+                <label class="check-line">
+                  <input id="save-shots" type="checkbox" checked />
+                  <span>保存关键截图作为报告证据</span>
+                </label>
+              </div>
+
+              <div class="actions">
+                <button class="btn primary disabled" id="start-task" type="button" aria-disabled="true">开始任务</button>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <h2>环境检测</h2>
+              <button class="btn" id="refresh-env" type="button">刷新</button>
+            </div>
+            <div class="panel-body">
+              <ul class="env-list" id="env-list"></ul>
+            </div>
+          </section>
+        </div>
+      </div>
+    </section>
+
+    <section class="screen" id="running">
+      <div class="content">
+        <div class="metric-row">
+          <div class="metric">
+            <div class="metric-value" id="step-count">0 / 30</div>
+            <div class="metric-label">已执行步数</div>
+          </div>
+          <div class="metric">
+            <div class="metric-value" id="elapsed">00:00</div>
+            <div class="metric-label">运行时间</div>
+          </div>
+          <div class="metric">
+            <div class="metric-value" id="running-interval">1s</div>
+            <div class="metric-label">截图读屏间隔</div>
+          </div>
+        </div>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h1>执行监控</h1>
+            <div class="actions flat">
+              <button class="btn danger" id="stop-task" type="button">终止任务</button>
+            </div>
+          </div>
+          <div class="panel-body">
+            <div class="stage" id="stage-box">
+              <div class="spinner"></div>
+              <div>
+                <div class="stage-title" id="stage-title">当前阶段：准备启动</div>
+                <div class="stage-copy" id="stage-copy">正在初始化任务。</div>
+                <button class="btn primary assist-btn" id="human-done" type="button" hidden>已完成人工协助，继续</button>
+              </div>
+            </div>
+
+            <div class="log-wrap">
+              <label>实时日志</label>
+              <pre class="log" id="log"></pre>
+            </div>
+          </div>
+        </section>
+      </div>
+    </section>
+
+    <section class="screen" id="done">
+      <div class="content">
+        <div class="result-hero">
+          <div>
+            <h2 id="done-title">任务已完成</h2>
+            <p id="done-summary">本地报告已生成</p>
+          </div>
+          <div class="actions flat">
+            <button class="btn primary" id="open-report" type="button">打开本地报告</button>
+            <button class="btn" id="open-log-dir" type="button">打开日志目录</button>
+            <button class="btn primary" id="back-home" type="button">回到首页</button>
+          </div>
+        </div>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h1>问题列表</h1>
+            <span class="pill warn" id="issue-count">0 个问题</span>
+          </div>
+          <div class="panel-body">
+            <ul class="issue-list" id="issue-list"></ul>
+          </div>
+        </section>
+      </div>
+    </section>
+  </main>
+
+  <script src="./renderer.js"></script>
+</body>
+</html>

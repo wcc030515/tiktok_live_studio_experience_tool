@@ -1,0 +1,829 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Live Studio AI Inspector MVP</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f4f6f8;
+      --surface: #ffffff;
+      --surface-soft: #f8fafc;
+      --line: #d8dee8;
+      --text: #172033;
+      --muted: #667085;
+      --accent: #ff2f6d;
+      --accent-deep: #cc1d52;
+      --ok: #14845f;
+      --warn: #b76e00;
+      --danger: #c83e4d;
+      --info: #2368a2;
+      --shadow: 0 12px 32px rgba(23, 32, 51, 0.10);
+      --radius: 8px;
+      --mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      font-family: Inter, "Segoe UI", "Microsoft YaHei", Arial, sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--text);
+      background:
+        linear-gradient(180deg, #eef3f7 0, #f8fafc 220px, var(--bg) 100%);
+    }
+
+    .prototype-controls {
+      width: min(1180px, calc(100vw - 48px));
+      margin: 24px auto 10px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .control-tabs {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .control-tab {
+      height: 34px;
+      padding: 0 14px;
+      border: 1px solid #cbd5e1;
+      border-radius: 6px;
+      color: #475467;
+      background: #fff;
+      font-weight: 700;
+      cursor: pointer;
+      box-shadow: 0 1px 2px rgba(16, 24, 40, .05);
+    }
+
+    .control-tab.active {
+      color: #fff;
+      border-color: var(--accent);
+      background: var(--accent);
+    }
+
+    .prototype-note {
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .app-shell {
+      width: min(1180px, calc(100vw - 48px));
+      margin: 0 auto 28px;
+      border: 1px solid #cfd6e2;
+      border-radius: var(--radius);
+      background: var(--surface);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .titlebar {
+      height: 48px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 16px 0 18px;
+      border-bottom: 1px solid var(--line);
+      background: #fbfcfe;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+      font-weight: 700;
+    }
+
+    .brand-mark {
+      width: 22px;
+      height: 22px;
+      border-radius: 6px;
+      background: conic-gradient(from 220deg, #22c4d6, var(--accent), #111827, #22c4d6);
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,.65);
+      flex: 0 0 auto;
+    }
+
+    .window-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: #667085;
+      font-family: var(--mono);
+      font-size: 14px;
+    }
+
+    .screen { display: none; }
+    .screen.active { display: block; }
+
+    .content {
+      padding: 20px;
+      background: var(--bg);
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.35fr) minmax(320px, .75fr);
+      gap: 16px;
+    }
+
+    .stack {
+      display: grid;
+      gap: 16px;
+    }
+
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--surface);
+      overflow: hidden;
+    }
+
+    .panel-head {
+      min-height: 46px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+      background: #fbfcfe;
+    }
+
+    .panel-title {
+      margin: 0;
+      font-size: 15px;
+      line-height: 1.25;
+    }
+
+    .panel-body { padding: 14px; }
+
+    label {
+      display: block;
+      margin-bottom: 7px;
+      color: #344054;
+      font-size: 13px;
+      font-weight: 650;
+    }
+
+    textarea,
+    select,
+    input[type="number"],
+    input[type="text"] {
+      width: 100%;
+      border: 1px solid #cbd5e1;
+      border-radius: 6px;
+      background: #fff;
+      color: var(--text);
+      font: inherit;
+      outline: none;
+    }
+
+    textarea {
+      min-height: 108px;
+      padding: 11px 12px;
+      resize: vertical;
+      line-height: 1.55;
+    }
+
+    select,
+    input[type="number"],
+    input[type="text"] {
+      height: 38px;
+      padding: 0 10px;
+    }
+
+    textarea:focus,
+    select:focus,
+    input:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(255, 47, 109, .13);
+    }
+
+    .field-row {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 14px;
+    }
+
+    .field-with-action {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px;
+      align-items: end;
+    }
+
+    .segmented {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 6px;
+      padding: 4px;
+      border: 1px solid #cbd5e1;
+      border-radius: 7px;
+      background: #eef2f7;
+    }
+
+    .segmented button {
+      min-height: 32px;
+      border: 0;
+      border-radius: 5px;
+      color: #475467;
+      background: transparent;
+      font-weight: 650;
+      cursor: pointer;
+    }
+
+    .segmented button.active {
+      color: var(--text);
+      background: #fff;
+      box-shadow: 0 1px 3px rgba(16,24,40,.10);
+    }
+
+    .check-line {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      min-height: 36px;
+      margin-top: 12px;
+      color: #344054;
+      font-size: 13px;
+    }
+
+    .check-line input {
+      width: 16px;
+      height: 16px;
+      accent-color: var(--accent);
+    }
+
+    .actions {
+      display: flex;
+      justify-content: flex-end;
+      align-items: center;
+      gap: 10px;
+      margin-top: 16px;
+    }
+
+    .btn {
+      height: 38px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 0 14px;
+      border: 1px solid #cbd5e1;
+      border-radius: 6px;
+      background: #fff;
+      color: var(--text);
+      font-weight: 700;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    .btn.primary {
+      border-color: var(--accent);
+      background: var(--accent);
+      color: #fff;
+    }
+
+    .btn.primary:hover { background: var(--accent-deep); }
+    .btn.danger { color: #fff; background: var(--danger); border-color: var(--danger); }
+    .btn.ghost { background: transparent; }
+
+    .env-list,
+    .issue-list,
+    .screenshot-list {
+      display: grid;
+      gap: 10px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .env-item {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      align-items: center;
+      padding: 10px 11px;
+      border: 1px solid #e3e8ef;
+      border-radius: 7px;
+      background: var(--surface-soft);
+    }
+
+    .env-name {
+      min-width: 0;
+      font-size: 13px;
+      font-weight: 650;
+    }
+
+    .env-detail {
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 12px;
+      font-family: var(--mono);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 24px;
+      padding: 0 9px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 750;
+      white-space: nowrap;
+    }
+
+    .pill.ok { color: #075e45; background: #dff5ec; }
+    .pill.warn { color: #7a4100; background: #fff0cf; }
+    .pill.info { color: #184f7a; background: #dcecff; }
+    .pill.danger { color: #8a1c2a; background: #ffe1e6; }
+
+    .metric-row {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+
+    .metric {
+      min-height: 78px;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--surface);
+    }
+
+    .metric-value {
+      font-size: 24px;
+      font-weight: 800;
+      line-height: 1.1;
+    }
+
+    .metric-label {
+      margin-top: 6px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .stage {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 14px;
+      border: 1px solid #c7d7e8;
+      border-radius: var(--radius);
+      background: #eef6ff;
+    }
+
+    .spinner {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      border: 3px solid #b9d7ef;
+      border-top-color: var(--info);
+      animation: spin 1s linear infinite;
+      flex: 0 0 auto;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .stage-title { font-weight: 800; }
+    .stage-copy { margin-top: 3px; color: #475467; font-size: 13px; }
+
+    .log {
+      height: 330px;
+      overflow: auto;
+      margin: 0;
+      padding: 12px;
+      border: 1px solid #d7dee8;
+      border-radius: var(--radius);
+      background: #111827;
+      color: #e5edf7;
+      font-family: var(--mono);
+      font-size: 12px;
+      line-height: 1.7;
+    }
+
+    .log .time { color: #9ca3af; }
+    .log .action { color: #67e8f9; }
+    .log .observe { color: #bfdbfe; }
+    .log .issue { color: #facc15; }
+    .log .done { color: #86efac; }
+
+    .issue {
+      padding: 11px;
+      border: 1px solid #e4e9f1;
+      border-radius: 7px;
+      background: var(--surface-soft);
+    }
+
+    .issue-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 5px;
+      font-size: 13px;
+      font-weight: 750;
+    }
+
+    .issue p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .issue-with-shot {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 128px;
+      gap: 12px;
+      align-items: center;
+    }
+
+    .assist-box {
+      margin-top: 12px;
+      padding: 12px;
+      border: 1px solid #ffe0a3;
+      border-radius: var(--radius);
+      background: #fff8e8;
+    }
+
+    .assist-box strong {
+      display: block;
+      margin-bottom: 4px;
+      color: #7a4100;
+      font-size: 13px;
+    }
+
+    .assist-box span {
+      color: #6b4e16;
+      font-size: 12px;
+    }
+
+    .result-hero {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 16px;
+      align-items: center;
+      padding: 18px;
+      border: 1px solid #cbe7da;
+      border-radius: var(--radius);
+      background: #effaf5;
+      margin-bottom: 16px;
+    }
+
+    .result-hero h2 {
+      margin: 0 0 6px;
+      font-size: 20px;
+      line-height: 1.25;
+    }
+
+    .result-hero p {
+      margin: 0;
+      color: #315c4b;
+      font-size: 13px;
+    }
+
+    .shot {
+      display: grid;
+      grid-template-columns: 112px 1fr;
+      gap: 10px;
+      align-items: center;
+      padding: 9px;
+      border: 1px solid #e4e9f1;
+      border-radius: 7px;
+      background: #fff;
+    }
+
+    .thumb {
+      height: 64px;
+      border: 1px solid #d6dee9;
+      border-radius: 6px;
+      background:
+        linear-gradient(90deg, rgba(34,196,214,.16), rgba(255,47,109,.13)),
+        repeating-linear-gradient(0deg, #f8fafc, #f8fafc 8px, #eef2f7 8px, #eef2f7 16px);
+    }
+
+    .shot strong {
+      display: block;
+      font-size: 13px;
+      margin-bottom: 4px;
+    }
+
+    .shot span {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .footer-note {
+      margin-top: 12px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    @media (max-width: 900px) {
+      .prototype-controls,
+      .app-shell { width: min(100vw - 24px, 760px); }
+      .prototype-controls { margin-top: 12px; }
+      .grid { grid-template-columns: 1fr; }
+      .metric-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .field-row { grid-template-columns: 1fr; }
+      .result-hero { grid-template-columns: 1fr; }
+      .issue-with-shot { grid-template-columns: 1fr; }
+    }
+
+    @media (max-width: 560px) {
+      .content { padding: 12px; }
+      .prototype-controls { align-items: flex-start; flex-direction: column; }
+      .metric-row { grid-template-columns: 1fr; }
+      .actions { flex-wrap: wrap; justify-content: stretch; }
+      .btn { flex: 1 1 auto; }
+      .shot { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="prototype-controls" aria-label="设计稿状态切换">
+    <div class="control-tabs">
+      <button class="control-tab" data-screen="prepare" type="button">执行前</button><button class="control-tab" data-screen="running" type="button">执行中</button><button class="control-tab active" data-screen="done" type="button">执行后</button>
+    </div>
+    <span class="prototype-note">设计稿预览控制，不属于产品窗口 UI</span>
+  </div>
+
+  <main class="app-shell" aria-label="Live Studio AI Inspector MVP">
+    <header class="titlebar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span>Live Studio AI Inspector <span style="color:#667085;font-weight:650;">MVP</span></span>
+      </div>
+      <div class="window-actions" aria-hidden="true">
+        <span>─</span><span>□</span><span>×</span>
+      </div>
+    </header>
+
+    <section class="screen" id="prepare">
+      <div class="content">
+        <div class="stack">
+          <section class="panel">
+            <div class="panel-head">
+              <h1 class="panel-title">任务配置</h1>
+              <span class="pill ok">就绪</span>
+            </div>
+            <div class="panel-body">
+              <label for="task">任务描述</label>
+              <textarea id="task">以萌新游戏主播的身份完成 Live Studio 首次开播流程，重点关注入口理解、配置负担、加载等待和异常反馈，输出体验报告。</textarea>
+
+              <div class="field-row">
+                <div>
+                  <label>报告类型</label>
+                  <div class="segmented" role="group" aria-label="报告类型">
+                    <button class="active" type="button">体验报告</button>
+                    <button type="button">验收报告</button>
+                  </div>
+                </div>
+                <div class="field-with-action">
+                  <div>
+                    <label for="role">执行角色</label>
+                    <select id="role">
+                      <option>萌新游戏主播</option>
+                      <option>萌新秀场主播</option>
+                      <option>专业测试专家</option>
+                      <option>资深主播</option>
+                    </select>
+                  </div>
+                  <button class="btn" type="button" style="height:38px;padding:0 10px;">角色目录</button>
+                </div>
+              </div>
+
+              <div class="field-row">
+                <div>
+                  <label for="max-steps">最多操作步数</label>
+                  <input id="max-steps" type="number" min="5" max="80" value="30" />
+                </div>
+                <div>
+                  <label for="interval">截图读屏间隔</label>
+                  <select id="interval">
+                    <option>0.5 秒</option>
+                    <option>1 秒</option>
+                    <option>1.5 秒</option>
+                    <option>2 秒</option>
+                    <option>3 秒</option>
+                    <option>5 秒</option>
+                  </select>
+                </div>
+              </div>
+
+              <label class="check-line">
+                <input type="checkbox" checked />
+                <span>允许 AI 执行真实开播操作</span>
+              </label>
+              <label class="check-line">
+                <input type="checkbox" checked />
+                <span>保存关键截图作为报告证据</span>
+              </label>
+
+              <div class="actions">
+                <button class="btn primary task-toggle" type="button" data-jump="running" data-state="idle">开始任务</button>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <h2 class="panel-title">环境检测</h2>
+              <button class="btn" type="button" style="height:30px;padding:0 10px;">刷新</button>
+            </div>
+            <div class="panel-body">
+              <ul class="env-list">
+                <li class="env-item">
+                  <div>
+                    <div class="env-name">Live Studio</div>
+                    <div class="env-detail">进程运行中 · 1.29.0</div>
+                  </div>
+                  <span class="pill ok">可用</span>
+                </li>
+                <li class="env-item">
+                  <div>
+                    <div class="env-name">Live Studio 登录状态</div>
+                    <div class="env-detail">已识别首页入口</div>
+                  </div>
+                  <span class="pill ok">已登录</span>
+                </li>
+                <li class="env-item">
+                  <div>
+                    <div class="env-name">Codex CLI</div>
+                    <div class="env-detail">codex-cli 0.136.0 · ChatGPT</div>
+                  </div>
+                  <span class="pill ok">可调用</span>
+                </li>
+                <li class="env-item">
+                  <div>
+                    <div class="env-name">桌面操作能力</div>
+                    <div class="env-detail">截图 · 定位 · 鼠标点击</div>
+                  </div>
+                  <span class="pill ok">可用</span>
+                </li>
+                <li class="env-item">
+                  <div>
+                    <div class="env-name">屏幕信息</div>
+                    <div class="env-detail">主显示器 2560×1440 · DPI 150%</div>
+                  </div>
+                  <span class="pill info">已记录</span>
+                </li>
+              </ul>
+            </div>
+          </section>
+        </div>
+      </div>
+    </section>
+
+    <section class="screen" id="running">
+      <div class="content">
+        <div class="metric-row">
+          <div class="metric">
+            <div class="metric-value">7 / 30</div>
+            <div class="metric-label">已执行步数</div>
+          </div>
+          <div class="metric">
+            <div class="metric-value">02:18</div>
+            <div class="metric-label">运行时间</div>
+          </div>
+          <div class="metric">
+            <div class="metric-value">2s</div>
+            <div class="metric-label">截图读屏间隔</div>
+          </div>
+        </div>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h1 class="panel-title">执行监控</h1>
+            <div class="actions" style="margin:0;">
+              <button class="btn danger task-toggle" type="button" data-state="running">终止任务</button>
+            </div>
+          </div>
+          <div class="panel-body">
+            <div class="stage">
+              <div class="spinner" aria-hidden="true"></div>
+              <div>
+                <div class="stage-title">当前阶段：执行动作</div>
+                <div class="stage-copy">Step 7 · 正在点击「开始直播」按钮，并等待页面反馈。</div>
+              </div>
+            </div>
+
+            <div style="margin-top:14px;">
+              <label>实时日志</label>
+              <pre class="log"><span class="time">14:30:18</span> <span class="observe">OBSERVE</span> 识别到开播设置页，摄像头区域可见
+<span class="time">14:30:20</span> <span class="action">ACTION</span> 点击「摄像头」下拉选择
+<span class="time">14:30:22</span> <span class="observe">OBSERVE</span> 摄像头列表展开，检测到 3 个设备选项
+<span class="time">14:30:24</span> <span class="done">DONE</span> 摄像头配置完成
+<span class="time">14:30:26</span> <span class="action">ACTION</span> 滚动页面寻找「开始直播」按钮
+<span class="time">14:30:28</span> <span class="issue">ISSUE</span> 主按钮不在首屏可视区域，需要滚动
+<span class="time">14:30:30</span> <span class="action">ACTION</span> 正在点击「开始直播」</pre>
+            </div>
+          </div>
+        </section>
+      </div>
+    </section>
+
+    <section class="screen active" id="done">
+      <div class="content">
+        <div class="result-hero">
+          <div>
+            <h2>任务已完成</h2>
+            <p>共执行 15 步 · 耗时 4 分 32 秒 · 发现 5 个问题 · 本地报告已生成</p>
+          </div>
+          <div class="actions" style="margin:0;">
+            <button class="btn primary" type="button">打开本地报告</button>
+            <button class="btn" type="button">打开日志目录</button>
+            <button class="btn primary task-toggle" type="button" data-jump="prepare" data-state="done">回到首页</button>
+          </div>
+        </div>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h1 class="panel-title">问题列表</h1>
+            <span class="pill warn">5 个问题</span>
+          </div>
+          <div class="panel-body">
+            <ul class="issue-list">
+              <li class="issue issue-with-shot">
+                <div>
+                  <div class="issue-head">
+                    <span>开播失败无错误提示</span>
+                    <span class="pill danger">Critical</span>
+                  </div>
+                  <p>网络异常时点击开始直播，界面无任何反馈，用户无法判断失败原因。</p>
+                </div>
+                <div class="thumb" aria-label="问题截图缩略图"></div>
+              </li>
+              <li class="issue issue-with-shot">
+                <div>
+                  <div class="issue-head">
+                    <span>摄像头加载耗时过长</span>
+                    <span class="pill warn">Major</span>
+                  </div>
+                  <p>等待 4.2 秒才显示设备列表，无 loading 状态提示。</p>
+                </div>
+                <div class="thumb" aria-label="问题截图缩略图"></div>
+              </li>
+              <li class="issue issue-with-shot">
+                <div>
+                  <div class="issue-head">
+                    <span>关键按钮不在视口内</span>
+                    <span class="pill warn">Major</span>
+                  </div>
+                  <p>开始直播按钮需要滚动才能看到，新主播容易误以为配置未完成。</p>
+                </div>
+                <div class="thumb" aria-label="问题截图缩略图"></div>
+              </li>
+              <li class="issue">
+                <div class="issue-head">
+                  <span>专业术语缺乏解释</span>
+                  <span class="pill info">Minor</span>
+                </div>
+                <p>码率、关键帧间隔等设置缺少解释或默认推荐。</p>
+              </li>
+            </ul>
+          </div>
+        </section>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const tabs = [...document.querySelectorAll(".control-tab")];
+    const screens = [...document.querySelectorAll(".screen")];
+
+    function showScreen(id) {
+      tabs.forEach(tab => tab.classList.toggle("active", tab.dataset.screen === id));
+      screens.forEach(screen => screen.classList.toggle("active", screen.id === id));
+    }
+
+    tabs.forEach(tab => tab.addEventListener("click", () => showScreen(tab.dataset.screen)));
+    document.querySelectorAll("[data-jump]").forEach(button => {
+      button.addEventListener("click", () => showScreen(button.dataset.jump));
+    });
+
+    document.querySelectorAll(".segmented button").forEach(button => {
+      button.addEventListener("click", () => {
+        button.parentElement.querySelectorAll("button").forEach(item => item.classList.remove("active"));
+        button.classList.add("active");
+      });
+    });
+  </script>
+</body>
+</html>

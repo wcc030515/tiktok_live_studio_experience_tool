@@ -1,0 +1,74 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "action",
+    "reason",
+    "confidence",
+    "target",
+    "x",
+    "y",
+    "text",
+    "key",
+    "app",
+    "wait_ms",
+    "need_human",
+    "current_state",
+    "experience_note",
+    "issue"
+  ],
+  "properties": {
+    "action": {
+      "type": "string",
+      "enum": [
+        "observe",
+        "click",
+        "double_click",
+        "type_text",
+        "press_key",
+        "hotkey",
+        "scroll",
+        "wait",
+        "launch_app",
+        "focus_window",
+        "ask_human",
+        "finish"
+      ]
+    },
+    "reason": { "type": "string" },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "target": { "type": ["string", "null"] },
+    "x": { "type": ["number", "null"] },
+    "y": { "type": ["number", "null"] },
+    "text": { "type": ["string", "null"] },
+    "key": { "type": ["string", "null"] },
+    "app": { "type": ["string", "null"] },
+    "wait_ms": { "type": ["number", "null"] },
+    "need_human": { "type": "boolean" },
+    "current_state": {
+      "type": "string",
+      "description": "对当前页面/弹窗/任务进展的判断，例如主界面未开播、Live info 信息确认弹窗、正在直播中。"
+    },
+    "experience_note": {
+      "type": "string",
+      "description": "从执行角色视角记录当前体验感受、理解成本、困惑点或正向体验。"
+    },
+    "issue": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["title", "severity", "description"],
+      "properties": {
+        "title": { "type": "string" },
+        "severity": {
+          "type": "string",
+          "enum": ["Critical", "Major", "Minor"]
+        },
+        "description": { "type": "string" }
+      }
+    }
+  }
+}

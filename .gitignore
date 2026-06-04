@@ -1,0 +1,14 @@
+node_modules/
+dist/
+build/
+out/
+
+runs/
+.codex_tmp/
+.rpa_tmp/
+.rpa_tmp2/
+
+*.log
+*.tmp
+.DS_Store
+Thumbs.db
