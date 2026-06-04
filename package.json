@@ -1,5 +1,5 @@
 {
-  "name": "live-studio-ai-inspector",
+  "name": "live-studio-experience-assistant",
   "version": "0.1.0",
   "description": "MVP GUI for AI-assisted TikTok LIVE Studio product experience testing.",
   "main": "src/main.js",
@@ -10,8 +10,8 @@
     "dist": "electron-builder"
   },
   "build": {
-    "appId": "com.bytedance.live-studio-ai-inspector.mvp",
-    "productName": "Live Studio AI Inspector",
+    "appId": "com.bytedance.live-studio-experience-assistant.mvp",
+    "productName": "LIVE Studio experience assistant",
     "directories": {
       "output": "dist"
     },

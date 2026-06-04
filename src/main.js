@@ -808,10 +808,7 @@ function showInspectorWindow() {
 
 async function hideInspectorForLiveTask(run) {
   if (!run?.focusTitle || !/Live Studio/i.test(run.focusTitle)) return;
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.minimize();
-    await new Promise((resolve) => setTimeout(resolve, 600));
-  }
+  await Promise.resolve();
 }
 
 function humanHelpMessage(action, fallback) {
@@ -902,7 +899,7 @@ async function writeReport(run, config, env, role, actions, state) {
   }
 
   const report = [
-    "# Live Studio AI Inspector 报告",
+    "# LIVE Studio experience assistant 报告",
     "",
     `- 任务描述：${config.task}`,
     `- 报告类型：${config.reportType}`,
@@ -987,11 +984,6 @@ async function startTask(config) {
       return finishRun(run, "任务失败", "启动失败", report, 0);
     }
     run.cdpAvailable = await ensureLiveStudioCdp(run);
-    await appendLog(run, "observe", "为避免遮挡目标窗口，Inspector 将自动最小化到任务栏");
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.minimize();
-      await new Promise((resolve) => setTimeout(resolve, 600));
-    }
     await activateLiveStudio(run);
   }
 
@@ -1123,9 +1115,9 @@ function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1180,
     height: 920,
-    minWidth: 960,
-    minHeight: 720,
-    title: "Live Studio AI Inspector",
+    minWidth: 590,
+    minHeight: 560,
+    title: "LIVE Studio experience assistant",
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,

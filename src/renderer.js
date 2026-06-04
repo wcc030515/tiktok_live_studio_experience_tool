@@ -102,7 +102,7 @@ function readConfig() {
     task: $("#task").value.trim(),
     reportType: selectedReportType(),
     role: roleSelect.value,
-    maxSteps: Number($("#max-steps").value || 30),
+    maxSteps: Number($("#max-steps").value || 60),
     readInterval: Number($("#interval").value || 1),
     allowRealGoLive: $("#allow-live").checked,
     saveScreenshots: $("#save-shots").checked
@@ -112,7 +112,7 @@ function readConfig() {
 function resetRunUi() {
   stepCount = 0;
   logEl.textContent = "";
-  $("#step-count").textContent = `0 / ${$("#max-steps").value || 30}`;
+  $("#step-count").textContent = `0 / ${$("#max-steps").value || 60}`;
   $("#running-interval").textContent = `${$("#interval").value}s`;
   $("#stage-box").classList.remove("need-human");
   $("#human-done").hidden = true;
@@ -136,7 +136,7 @@ function appendLog(row) {
   if (["observe", "action", "done"].includes(row.type)) {
     $("#human-done").hidden = true;
     stepCount += row.type === "action" ? 1 : 0;
-    $("#step-count").textContent = `${stepCount} / ${$("#max-steps").value || 30}`;
+    $("#step-count").textContent = `${stepCount} / ${$("#max-steps").value || 60}`;
     $("#stage-title").textContent = row.type === "action" ? "当前阶段：执行动作" : "当前阶段：观察与判断";
     $("#stage-copy").textContent = row.message;
   }
