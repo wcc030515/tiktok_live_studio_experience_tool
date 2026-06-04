@@ -204,6 +204,9 @@ textarea:focus, select:focus, input:focus {
 .log {
   height: 360px;
   overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
   margin: 0;
   padding: 12px;
   border: 1px solid #d7dee8;

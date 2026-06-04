@@ -381,6 +381,8 @@ function cdpClickTextFromAction(action) {
   const text = `${action.target || ""} ${action.reason || ""}`;
   if (/go\s*live/i.test(text)) return "Go LIVE";
   if (/add source|添加源/i.test(text)) return "Add source";
+  if (/game capture|游戏捕获|游戏源/i.test(text)) return "Game Capture";
+  if (/add\b|添加|确认添加/i.test(text)) return "Add";
   if (/live center/i.test(text)) return "LIVE Center";
   if (/live info/i.test(text)) return "LIVE info";
   if (/continue|继续|下一步/i.test(text)) return "Continue";
@@ -588,11 +590,15 @@ async function executeCdpAction(run, action) {
             return { ok: true, kind: "scroll", before, after: target.scrollTop, scopeText: (scope.innerText || "").slice(0, 120) };
           }
 
-          const clickables = [...scope.querySelectorAll("button,[role=button],input[type=button],input[type=submit],a")]
+          const clickables = [...scope.querySelectorAll("button,[role=button],[role=option],[role=menuitem],input[type=button],input[type=submit],a,[tabindex],[data-testid],[class*=item],[class*=Item],[class*=card],[class*=Card]")]
             .filter(visible)
             .map((el) => ({ el, rect: el.getBoundingClientRect(), text: (el.innerText || el.value || el.getAttribute("aria-label") || "").trim() }))
             .filter((item) => item.text && textMatches(item.el, text))
-            .sort((a, b) => b.rect.y - a.rect.y);
+            .sort((a, b) => {
+              const aExact = a.text.toLowerCase() === String(text).toLowerCase() ? 1 : 0;
+              const bExact = b.text.toLowerCase() === String(text).toLowerCase() ? 1 : 0;
+              return (bExact - aExact) || ((a.rect.width * a.rect.height) - (b.rect.width * b.rect.height)) || (b.rect.y - a.rect.y);
+            });
           const target = clickables[0];
           if (!target) {
             return { ok: false, error: `scope 内未找到可点击文本：${text}`, scopeText: (scope.innerText || "").slice(0, 500) };
@@ -648,9 +654,40 @@ function compactHistory(run) {
     .join("\n");
 }
 
+function isGameLiveTask(config) {
+  return /游戏|game|steam|roblox|游戏主播|游戏源|game capture/i.test(`${config.task || ""} ${config.role || ""}`);
+}
+
+function inferGameSourceState(snapshot) {
+  const text = `${snapshot?.bodyText || ""} ${JSON.stringify(snapshot?.controls || [])}`.toLowerCase();
+  const inSourcePicker = /select source|choose source|source type|game capture[\s\S]{0,400}window capture|window capture[\s\S]{0,400}display capture|browser source|image source|选择[\s\S]{0,80}源|游戏捕获[\s\S]{0,400}窗口捕获|窗口捕获[\s\S]{0,400}显示器捕获/.test(text);
+  const hasAddSource = /add source|添加源/.test(text);
+  const hasGameCaptureOption = /game capture|游戏捕获/.test(text);
+  const hasGameSourceOnCanvas = /game capture|游戏源|roblox|steam|monster hunter|window capture|display capture/.test(text)
+    && !/live settings|live info/.test(text)
+    && !inSourcePicker;
+  return {
+    required: false,
+    inSourcePicker,
+    hasAddSource,
+    hasGameCaptureOption,
+    hasGameSourceOnCanvas,
+    summary: hasGameSourceOnCanvas
+      ? "已在主界面/画布相关 DOM 中看到疑似游戏源或游戏窗口信息。"
+      : inSourcePicker
+        ? "当前疑似处于添加源/源选择流程，需要选择 Game Capture 并点击 Add/添加。"
+        : hasAddSource
+          ? "当前看到 Add source 入口，但尚未确认画布已有游戏源。"
+          : "尚未确认画布已有游戏源，也未稳定识别到添加源入口。"
+  };
+}
+
 async function callCodex(run, config, roleText, observation, step) {
   const codex = await findOnPath("codex");
   const outputFile = path.join(run.dir, `codex-action-${String(step).padStart(2, "0")}.json`);
+  const gameTask = isGameLiveTask(config);
+  const gameSourceState = inferGameSourceState(observation.cdpSnapshot);
+  gameSourceState.required = gameTask;
   if (!codex) {
     return {
       ok: false,
@@ -695,10 +732,13 @@ async function callCodex(run, config, roleText, observation, step) {
     "10. 如果发现新弹窗/浮层，先判断它是什么、是否阻塞当前任务、是否值得从角色视角体验；不要机械关闭。右上角 LIVE Chat 浮窗是全屏游戏主播阅读观众评论用的，不是错误弹窗，除非遮挡关键操作或任务要求体验聊天浮窗，否则不要当作阻塞。",
     "11. 如果你连续看不懂页面、遇到验证码/登录/安全验证/权限弹窗，请 ask_human。",
     "12. 如果当前画布内容不完整，例如缺少游戏画面、摄像头、麦克风状态不清晰，要从角色视角记录体验问题，并可尝试 Add source 或相关配置。",
-    "13. 达成任务目标后 action=finish，并在 reason 中总结完成情况和关键体验发现。",
-    "14. press_key/hotkey 使用 Windows SendKeys 写法，例如 Enter 用 {ENTER}，Esc 用 {ESC}，Ctrl+V 用 ^v，Alt+Tab 用 %{TAB}。",
-    "15. scroll 动作用 y 表示滚动方向和幅度；CDP 会优先滚动当前弹窗或页面里的可滚动容器，向下滚动用 700，向上滚动用 -700。",
-    "16. launch_app 的 app 优先填写可执行文件路径、协议或系统可识别的启动目标；如果不知道路径，可先 focus_window 或 ask_human。",
+    "13. 如果任务或角色包含游戏主播、游戏源、Game Capture、Steam、Roblox 等游戏开播语义，那么进入开播流程前必须先确认画布/源列表中已经存在至少一个游戏源。没有确认游戏源前，不允许点击主界面 Go LIVE，也不允许点击 Live info 中的最终 Go LIVE。",
+    "14. 游戏源添加的优先路径是：点击 Add source / 添加源 -> 在源选择页选择 Game Capture / 游戏捕获 -> 点击 Add / 添加 / Done。添加后必须回到主界面并确认画布或源列表中出现游戏源/游戏窗口，再继续开播。",
+    "15. 如果用户已经提前打开全屏游戏，你需要把它作为待捕获对象；若 Game Capture 后还需要选择具体游戏窗口，请选择最像当前游戏的窗口。找不到游戏窗口或无法确认添加成功时 ask_human，不要跳过游戏源直接开播。",
+    "16. 达成任务目标后 action=finish，并在 reason 中总结完成情况和关键体验发现。",
+    "17. press_key/hotkey 使用 Windows SendKeys 写法，例如 Enter 用 {ENTER}，Esc 用 {ESC}，Ctrl+V 用 ^v，Alt+Tab 用 %{TAB}。",
+    "18. scroll 动作用 y 表示滚动方向和幅度；CDP 会优先滚动当前弹窗或页面里的可滚动容器，向下滚动用 700，向上滚动用 -700。",
+    "19. launch_app 的 app 优先填写可执行文件路径、协议或系统可识别的启动目标；如果不知道路径，可先 focus_window 或 ask_human。",
     "",
     `任务描述：${config.task}`,
     `报告类型：${config.reportType}`,
@@ -706,6 +746,11 @@ async function callCodex(run, config, roleText, observation, step) {
     `当前步数：${step} / ${config.maxSteps}`,
     `允许真实开播：${config.allowRealGoLive ? "是" : "否"}`,
     `Live Studio 默认路径：${LIVE_STUDIO_EXE}`,
+    "",
+    "游戏源前置状态：",
+    gameTask
+      ? JSON.stringify(gameSourceState)
+      : "当前任务未识别为游戏开播任务，按普通任务推进。",
     "",
     "角色设定：",
     roleText.slice(0, 1800),
@@ -865,12 +910,26 @@ async function executeAction(run, action) {
   const actionText = `${normalized.target || ""} ${normalized.reason || ""}`;
   const isTaskbarClick = normalized.action === "click" && /任务栏|taskbar/i.test(actionText);
   const isGoLiveClick = normalized.action === "click" && !isTaskbarClick && /go\s*live|开播按钮|开始直播|粉色按钮|粉色\s*CTA/i.test(actionText);
+  let redirectedGoLiveToSource = false;
+  if (isGoLiveClick && run.gameSourceRequired && !run.gameSourceConfirmed) {
+    await appendLog(run, "issue", "游戏开播任务尚未确认已添加游戏源，已拦截 Go LIVE，优先进入 Add source 流程");
+    if (!run.gameCanAddSource) {
+      return {
+        pause: true,
+        reason: "need_human",
+        message: "游戏开播前必须先添加游戏源，但当前页面未识别到 Add source 入口。请人工协助打开添加源入口或确认游戏源已存在后继续。"
+      };
+    }
+    normalized.target = "Add source";
+    normalized.reason = "游戏开播前必须先添加游戏源，改为点击 Add source";
+    redirectedGoLiveToSource = true;
+  }
   let result = await executeCdpAction(run, normalized);
   if (!result.ok && !result.skipped) {
     await appendLog(run, "issue", `CDP 动作失败，将回退 RPA：${result.error || "未知错误"}`);
   }
   if (!result.ok) {
-    result = isGoLiveClick ? await clickPinkCta(run) : await rpa(run, "act", normalized);
+    result = isGoLiveClick && !redirectedGoLiveToSource ? await clickPinkCta(run) : await rpa(run, "act", normalized);
   }
   if (!result.ok) {
     await appendLog(run, "issue", `动作执行失败：${result.error || result.reason || "未知错误"}`);
@@ -965,6 +1024,9 @@ async function startTask(config) {
     lastActionKey: "",
     repeatCount: 0,
     focusFailureCount: 0,
+    gameSourceRequired: isGameLiveTask(config),
+    gameSourceConfirmed: false,
+    gameCanAddSource: false,
     focusTitle: /live studio/i.test(config.task) ? "TikTok LIVE Studio" : "",
     focusProcess: /live studio/i.test(config.task) ? "TikTok LIVE Studio" : ""
   };
@@ -1005,6 +1067,12 @@ async function startTask(config) {
       observation.cdpSnapshot = await getCdpSnapshot();
       if (observation.cdpSnapshot) {
         await appendLog(run, "done", `CDP 已读取 DOM：${observation.cdpSnapshot.controls?.length || 0} 个可见控件`);
+        if (run.gameSourceRequired) {
+          const gameState = inferGameSourceState(observation.cdpSnapshot);
+          run.gameCanAddSource = Boolean(gameState.hasAddSource || gameState.inSourcePicker || gameState.hasGameCaptureOption);
+          if (gameState.hasGameSourceOnCanvas) run.gameSourceConfirmed = true;
+          await appendLog(run, "observe", `游戏源检查：${gameState.summary}`);
+        }
       }
     }
     if (!observation.ok) {
