@@ -142,9 +142,11 @@ def ask_mimo(api_key: str, base_url: str, model: str, img: Image.Image, prompt: 
     return data["choices"][0]["message"]["content"]
 
 
-def ask_codex(root: Path, img_path: Path, prompt: str, output_path: Path) -> str:
+def ask_codex(codex_path: str, root: Path, img_path: Path, prompt: str, output_path: Path) -> str:
+    if not codex_path:
+        raise RuntimeError("未找到 Codex CLI 可执行文件")
     cmd = [
-        "codex",
+        codex_path,
         "exec",
         "--ignore-user-config",
         "--json",
@@ -155,7 +157,10 @@ def ask_codex(root: Path, img_path: Path, prompt: str, output_path: Path) -> str
         "--image",
         str(img_path),
     ]
-    result = subprocess.run(cmd, input=prompt, text=True, encoding="utf-8", cwd=str(root), capture_output=True, timeout=180)
+    try:
+        result = subprocess.run(cmd, input=prompt, text=True, encoding="utf-8", cwd=str(root), capture_output=True, timeout=180)
+    except FileNotFoundError as exc:
+        raise RuntimeError(f"Codex CLI 路径不可执行：{codex_path}；{exc}") from exc
     if result.returncode != 0:
         raise RuntimeError((result.stderr or result.stdout or "Codex CLI 调用失败")[:1200])
     if output_path.exists():
@@ -165,13 +170,31 @@ def ask_codex(root: Path, img_path: Path, prompt: str, output_path: Path) -> str
 
 def ask_provider(args: argparse.Namespace, root: Path, img: Image.Image, img_path: Path, prompt: str, output_path: Path) -> str:
     if args.provider == "codex":
-        return ask_codex(root, img_path, prompt, output_path)
+        return ask_codex(args.codex_path, root, img_path, prompt, output_path)
     if args.provider == "mimo":
         api_key = args.mimo_api_key or os.getenv("XIAOMI_API_KEY", "")
         if not api_key:
             raise RuntimeError("缺少 MiMo API Key")
         return ask_mimo(api_key, args.mimo_base_url, args.mimo_model, img, prompt)
     raise RuntimeError(f"未知 AI 引擎：{args.provider}")
+
+
+def fallback_report(task: str, role: str, action_log: list[dict[str, Any]], error: str = "") -> str:
+    lines = [
+        "# LIVE Studio 体验任务报告",
+        "",
+        f"- 任务：{task}",
+        f"- 角色：{role}",
+        f"- 执行状态：未完整完成",
+    ]
+    if error:
+        lines.append(f"- 失败原因：{error}")
+    lines.extend(["", "## 执行记录"])
+    if not action_log:
+        lines.append("- 未产生有效操作记录。")
+    for item in action_log:
+        lines.append(f"- Step {item.get('step', '-')}: {item.get('summary', '')}")
+    return "\n".join(lines) + "\n"
 
 
 def to_abs(wl: int, wt: int, scale: float, x: float, y: float) -> tuple[int, int]:
@@ -295,8 +318,7 @@ def run(args: argparse.Namespace) -> int:
     screenshots_dir.mkdir(parents=True, exist_ok=True)
 
     if not is_admin():
-        emit("ask_human", "当前不是管理员权限。真实鼠标键盘操作可能失败，请用管理员权限启动本工具")
-        return 2
+        emit("warn", "当前不是管理员权限，真实鼠标键盘操作可能失败；建议用管理员权限启动本工具")
 
     win = find_window(args.window_title)
     if win is None:
@@ -322,7 +344,13 @@ def run(args: argparse.Namespace) -> int:
 
             prompt = build_step_prompt(args.task, args.role, role_text, strategy, action_log, sw, sh, args.allow_go_live)
             output_path = run_dir / f"model_step_{step:02d}.txt"
-            raw = ask_provider(args, root, img, img_path, prompt, output_path)
+            try:
+                raw = ask_provider(args, root, img, img_path, prompt, output_path)
+            except Exception as exc:
+                summary = f"AI 调用失败：{exc}"
+                emit("ask_human", summary)
+                action_log.append({"step": step, "summary": summary, "screenshot": str(img_path)})
+                break
             data = extract_json_object(raw)
             if not data:
                 summary = "模型返回无法解析，等待后重试"
@@ -368,7 +396,10 @@ def run(args: argparse.Namespace) -> int:
     final_img.save(final_path, format="PNG")
     (run_dir / "action_log.json").write_text(json.dumps(action_log, ensure_ascii=False, indent=2), encoding="utf-8")
     report_prompt = build_report_prompt(args.task, args.role, role_text, action_log)
-    report_raw = ask_provider(args, root, final_img, final_path, report_prompt, run_dir / "model_report.txt")
+    try:
+        report_raw = ask_provider(args, root, final_img, final_path, report_prompt, run_dir / "model_report.txt")
+    except Exception as exc:
+        report_raw = fallback_report(args.task, args.role, action_log, f"报告生成阶段 AI 调用失败：{exc}")
     report_path = run_dir / "report.md"
     report_path.write_text(report_raw, encoding="utf-8")
     result = {"success": success, "action_log": action_log, "reportFile": str(report_path), "logDir": str(run_dir)}
@@ -388,6 +419,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-steps", type=int, default=60)
     parser.add_argument("--allow-go-live", action="store_true")
     parser.add_argument("--provider", choices=["codex", "mimo"], default="codex")
+    parser.add_argument("--codex-path", default="")
     parser.add_argument("--mimo-base-url", default=DEFAULT_MIMO_BASE_URL)
     parser.add_argument("--mimo-model", default=DEFAULT_MIMO_MODEL)
     parser.add_argument("--mimo-api-key", default="")

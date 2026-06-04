@@ -1296,6 +1296,10 @@ async function startVisionTask(config) {
     "--max-steps", String(config.maxSteps || 60),
     "--provider", config.aiProvider || "codex"
   ];
+  if ((config.aiProvider || "codex") === "codex") {
+    const codexPath = await findOnPath("codex");
+    if (codexPath) args.push("--codex-path", codexPath);
+  }
   if (config.allowRealGoLive) args.push("--allow-go-live");
   if (config.aiProvider === "mimo") {
     args.push("--mimo-base-url", config.mimoBaseUrl || "https://token-plan-cn.xiaomimimo.com/v1");
