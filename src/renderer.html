@@ -55,6 +55,31 @@
                 </div>
               </div>
 
+              <div class="field-row">
+                <div>
+                  <label for="ai-provider">AI 引擎</label>
+                  <select id="ai-provider">
+                    <option value="codex" selected>Codex CLI</option>
+                    <option value="mimo">MiMo API</option>
+                  </select>
+                </div>
+                <div>
+                  <label for="mimo-model">MiMo 模型</label>
+                  <input id="mimo-model" type="text" value="mimo-v2-omni" />
+                </div>
+              </div>
+
+              <div class="field-row mimo-settings" id="mimo-settings" hidden>
+                <div>
+                  <label for="mimo-base-url">MiMo API 地址</label>
+                  <input id="mimo-base-url" type="text" value="https://token-plan-cn.xiaomimimo.com/v1" />
+                </div>
+                <div>
+                  <label for="mimo-api-key">MiMo API Key</label>
+                  <input id="mimo-api-key" type="password" placeholder="请输入 MiMo API Key" />
+                </div>
+              </div>
+
               <div class="check-row">
                 <label class="check-line">
                   <input id="allow-live" type="checkbox" checked />

@@ -10,6 +10,7 @@ let timer = null;
 let stepCount = 0;
 let envPassed = false;
 let issueImages = [];
+let lastEnv = null;
 
 function show(id) {
   document.querySelectorAll(".screen").forEach((screen) => {
@@ -35,6 +36,7 @@ function pillClass(status) {
 }
 
 function renderEnv(env) {
+  lastEnv = env;
   const items = [
     ["Live Studio", env.liveStudio],
     ["Live Studio 登录状态", env.liveLogin],
@@ -51,12 +53,16 @@ function renderEnv(env) {
       <span class="pill ${pillClass(item.status)}">${escapeHtml(item.label)}</span>
     </li>
   `).join("");
-  envPassed = Boolean(
-    ["ok", "warn"].includes(env.liveStudio?.status) &&
-    env.codex?.status === "ok" &&
-    env.desktop?.status === "ok"
-  );
+  envPassed = computeEnvPassed();
   updateStartButton();
+}
+
+function computeEnvPassed() {
+  if (!lastEnv) return false;
+  const baseOk = ["ok", "warn"].includes(lastEnv.liveStudio?.status) && lastEnv.desktop?.status === "ok";
+  if (!baseOk) return false;
+  if ($("#ai-provider")?.value === "mimo") return true;
+  return lastEnv.codex?.status === "ok";
 }
 
 async function refreshEnv() {
@@ -76,6 +82,7 @@ async function refreshEnv() {
 function updateStartButton() {
   const button = $("#start-task");
   const hasTask = Boolean($("#task").value.trim());
+  envPassed = computeEnvPassed();
   const canStart = envPassed && hasTask;
   button.classList.toggle("disabled", !canStart);
   button.setAttribute("aria-disabled", canStart ? "false" : "true");
@@ -98,6 +105,13 @@ function selectedReportType() {
 }
 
 function readConfig() {
+  const provider = $("#ai-provider").value;
+  localStorage.setItem("aiProvider", provider);
+  localStorage.setItem("mimoBaseUrl", $("#mimo-base-url").value.trim());
+  localStorage.setItem("mimoModel", $("#mimo-model").value.trim());
+  if ($("#mimo-api-key").value.trim()) {
+    localStorage.setItem("mimoApiKey", $("#mimo-api-key").value.trim());
+  }
   return {
     task: $("#task").value.trim(),
     reportType: selectedReportType(),
@@ -105,8 +119,18 @@ function readConfig() {
     maxSteps: Number($("#max-steps").value || 60),
     readInterval: Number($("#interval").value || 1),
     allowRealGoLive: $("#allow-live").checked,
-    saveScreenshots: $("#save-shots").checked
+    saveScreenshots: $("#save-shots").checked,
+    aiProvider: provider,
+    mimoBaseUrl: $("#mimo-base-url").value.trim(),
+    mimoModel: $("#mimo-model").value.trim(),
+    mimoApiKey: $("#mimo-api-key").value.trim() || localStorage.getItem("mimoApiKey") || ""
   };
+}
+
+function updateProviderUi() {
+  const isMimo = $("#ai-provider").value === "mimo";
+  $("#mimo-settings").hidden = !isMimo;
+  updateStartButton();
 }
 
 function resetRunUi() {
@@ -223,6 +247,7 @@ document.querySelectorAll("#report-type button").forEach((button) => {
 
 $("#refresh-env").addEventListener("click", refreshEnv);
 $("#task").addEventListener("input", updateStartButton);
+$("#ai-provider").addEventListener("change", updateProviderUi);
 $("#open-roles").addEventListener("click", () => window.inspector.openRolesDir());
 $("#start-task").addEventListener("click", async () => {
   const config = readConfig();
@@ -270,4 +295,9 @@ window.inspector.onTaskFinished((payload) => {
 });
 
 loadRoles();
+$("#ai-provider").value = localStorage.getItem("aiProvider") || "codex";
+$("#mimo-base-url").value = localStorage.getItem("mimoBaseUrl") || "https://token-plan-cn.xiaomimimo.com/v1";
+$("#mimo-model").value = localStorage.getItem("mimoModel") || "mimo-v2-omni";
+$("#mimo-api-key").value = localStorage.getItem("mimoApiKey") || "";
+updateProviderUi();
 refreshEnv();

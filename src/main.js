@@ -1,13 +1,14 @@
 const { app, BrowserWindow, ipcMain, shell, Menu } = require("electron");
 const path = require("node:path");
 const fs = require("node:fs/promises");
-const { execFile } = require("node:child_process");
+const { execFile, spawn } = require("node:child_process");
 
 const ROOT = path.resolve(__dirname, "..");
 const ROLES_DIR = path.join(ROOT, "roles");
 const RUNS_DIR = path.join(ROOT, "runs");
 const RPA_SCRIPT = path.join(ROOT, "tools", "rpa-control.ps1");
 const VERIFY_LIVE_RPA_SCRIPT = path.join(ROOT, "tools", "verify-live-rpa.ps1");
+const VISION_AGENT_SCRIPT = path.join(ROOT, "tools", "vision_agent.py");
 const ACTION_SCHEMA = path.join(ROOT, "schemas", "action.schema.json");
 const LIVE_STUDIO_EXE = "C:\\Program Files\\TikTok LIVE Studio\\1.29.0\\TikTok LIVE Studio.exe";
 const LIVE_STUDIO_LAUNCHER_EXE = "C:\\Program Files\\TikTok LIVE Studio\\TikTok LIVE Studio Launcher.exe";
@@ -1178,6 +1179,161 @@ function finishRun(run, status, duration, report, steps) {
   });
 }
 
+function mapVisionEventType(event) {
+  if (event === "finished") return "done";
+  if (event === "warn" || event === "error") return "issue";
+  if (event === "ask_human") return "ask_human";
+  if (event === "action") return "action";
+  if (event === "done") return "done";
+  return "observe";
+}
+
+async function readVisionResult(run) {
+  const resultFile = path.join(run.dir, "result.json");
+  if (!(await pathExists(resultFile))) {
+    return {
+      issues: [{
+        title: "视觉 Agent 未生成结果文件",
+        severity: "Major",
+        description: "任务结束时未找到 result.json，请查看日志目录。"
+      }],
+      reportFile: run.reportFile,
+      logDir: run.dir,
+      success: false,
+      steps: run.steps || 0
+    };
+  }
+  const result = JSON.parse(await fs.readFile(resultFile, "utf8"));
+  const actions = Array.isArray(result.action_log) ? result.action_log : [];
+  const issues = actions
+    .filter((item) => /请求人工协助|失败|无法|未能|错误|不确定/.test(String(item.summary || item.experience_note || "")))
+    .slice(0, 8)
+    .map((item) => ({
+      title: String(item.summary || "体验问题").slice(0, 60),
+      severity: /请求人工协助|失败|无法|错误/.test(String(item.summary || "")) ? "Major" : "Minor",
+      description: String(item.experience_note || item.current_state || item.summary || "详见本地报告。"),
+      screenshot: item.screenshot || null
+    }));
+  if (issues.length === 0) {
+    issues.push({
+      title: result.success ? "未发现明确阻塞问题" : "任务未完整完成",
+      severity: result.success ? "Minor" : "Major",
+      description: result.success ? "本次执行未沉淀明确问题，请查看完整报告。" : "任务未达到 done=true，详见完整报告和操作日志。"
+    });
+  }
+  return {
+    issues,
+    reportFile: result.reportFile || run.reportFile,
+    logDir: result.logDir || run.dir,
+    success: Boolean(result.success),
+    steps: actions.length
+  };
+}
+
+async function startVisionTask(config) {
+  if (activeRun?.running) throw new Error("已有任务正在执行");
+
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const dir = path.join(RUNS_DIR, stamp);
+  await fs.mkdir(dir, { recursive: true });
+  const roles = await listRoles();
+  const selected = roles.find((item) => item.name === config.role) || roles[0];
+  const run = {
+    running: true,
+    stopped: false,
+    dir,
+    logs: [],
+    steps: 0,
+    logFile: path.join(dir, "task.log"),
+    reportFile: path.join(dir, "report.md"),
+    child: null
+  };
+  activeRun = run;
+
+  send("task:started", { dir });
+  await appendLog(run, "observe", `任务启动，AI 引擎：${config.aiProvider === "mimo" ? "MiMo API" : "Codex CLI"}`);
+
+  const liveReady = /live studio/i.test(config.task) ? await ensureLiveStudioRunning(run) : true;
+  if (!liveReady) {
+    await fs.writeFile(run.reportFile, "# 任务失败\n\n未能启动或找到 Live Studio。", "utf8");
+    return finishRun(run, "任务失败", "启动失败", {
+      issues: [{ title: "Live Studio 启动失败", severity: "Critical", description: "未能启动或找到 Live Studio。" }],
+      reportFile: run.reportFile,
+      logDir: run.dir
+    }, 0);
+  }
+
+  const args = [
+    VISION_AGENT_SCRIPT,
+    "--root", ROOT,
+    "--run-dir", dir,
+    "--task", config.task,
+    "--role", config.role,
+    "--role-file", selected?.file || "",
+    "--window-title", "TikTok LIVE Studio",
+    "--max-steps", String(config.maxSteps || 60),
+    "--provider", config.aiProvider || "codex"
+  ];
+  if (config.allowRealGoLive) args.push("--allow-go-live");
+  if (config.aiProvider === "mimo") {
+    args.push("--mimo-base-url", config.mimoBaseUrl || "https://token-plan-cn.xiaomimimo.com/v1");
+    args.push("--mimo-model", config.mimoModel || "mimo-v2-omni");
+  }
+
+  await appendLog(run, "observe", `已加载角色：${selected?.name || config.role}`);
+  const child = spawn("python", args, {
+    cwd: ROOT,
+    windowsHide: true,
+    env: { ...process.env, PYTHONIOENCODING: "utf-8", XIAOMI_API_KEY: config.mimoApiKey || process.env.XIAOMI_API_KEY || "" }
+  });
+  run.child = child;
+
+  let stdoutBuffer = "";
+  child.stdout.on("data", async (chunk) => {
+    stdoutBuffer += chunk.toString("utf8");
+    const lines = stdoutBuffer.split(/\r?\n/);
+    stdoutBuffer = lines.pop() || "";
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      try {
+        const row = JSON.parse(line);
+        if (row.event === "action") run.steps += 1;
+        await appendLog(run, mapVisionEventType(row.event), row.message || row.event);
+      } catch {
+        await appendLog(run, "observe", line.slice(0, 500));
+      }
+    }
+  });
+  child.stderr.on("data", async (chunk) => {
+    const text = chunk.toString("utf8").trim();
+    if (text) await appendLog(run, "issue", text.slice(0, 1000));
+  });
+  child.on("close", async (code) => {
+    if (activeRun !== run) return;
+    if (run.stopped) {
+      await fs.writeFile(run.reportFile, "# 任务已终止\n\n用户终止了任务。", "utf8").catch(() => {});
+      return finishRun(run, "用户终止", `${run.steps} 步`, {
+        issues: [{ title: "用户终止任务", severity: "Major", description: "任务被用户手动终止。" }],
+        reportFile: run.reportFile,
+        logDir: run.dir
+      }, run.steps);
+    }
+    const result = await readVisionResult(run).catch(async (error) => {
+      await appendLog(run, "issue", error.message);
+      return {
+        issues: [{ title: "读取视觉 Agent 结果失败", severity: "Major", description: error.message }],
+        reportFile: run.reportFile,
+        logDir: run.dir,
+        success: false,
+        steps: run.steps
+      };
+    });
+    finishRun(run, result.success ? "任务已完成" : (code === 2 ? "需要人工协助" : "任务未完整完成"), `${result.steps || run.steps} 步`, result, result.steps || run.steps);
+  });
+
+  return { ok: true };
+}
+
 function createWindow() {
   Menu.setApplicationMenu(null);
   mainWindow = new BrowserWindow({
@@ -1208,7 +1364,7 @@ ipcMain.handle("env:detect", detectEnvironment);
 ipcMain.handle("roles:list", listRoles);
 ipcMain.handle("roles:openDir", () => shell.openPath(ROLES_DIR));
 ipcMain.handle("task:start", async (_event, config) => {
-  startTask(config).catch((error) => {
+  startVisionTask(config).catch((error) => {
     send("task:log", { time: new Date().toISOString(), type: "issue", message: error.message });
     send("task:error", { message: error.message });
   });
@@ -1218,6 +1374,7 @@ ipcMain.handle("task:stop", async () => {
   if (activeRun) {
     activeRun.stopped = true;
     await appendLog(activeRun, "issue", "用户请求终止任务");
+    activeRun.child?.kill?.();
     activeRun.resumeHuman?.();
   }
   return { ok: true };

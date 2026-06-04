@@ -1,0 +1,404 @@
+# -*- coding: utf-8 -*-
+from __future__ import annotations
+
+import argparse
+import base64
+import ctypes
+import io
+import json
+import math
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+from typing import Any
+
+import mss
+import pyautogui
+import pygetwindow as gw
+import pyperclip
+import requests
+from dotenv import load_dotenv
+from PIL import Image
+
+
+DEFAULT_MIMO_BASE_URL = "https://token-plan-cn.xiaomimimo.com/v1"
+DEFAULT_MIMO_MODEL = "mimo-v2-omni"
+MAX_IMAGE_PIXELS = 1_000_000
+MAX_IMAGE_LONGEST = 1400
+STEP_SLEEP_SEC = 1.0
+
+
+def emit(event: str, message: str, **extra: Any) -> None:
+    print(json.dumps({"event": event, "message": message, **extra}, ensure_ascii=False), flush=True)
+
+
+def is_admin() -> bool:
+    try:
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except Exception:
+        return False
+
+
+def find_window(title_substr: str) -> Any | None:
+    key = title_substr.lower()
+    wins = [w for w in gw.getAllWindows() if key in (w.title or "").lower()]
+    return wins[0] if wins else None
+
+
+def activate_window(win: Any) -> None:
+    try:
+        if win.isMinimized:
+            win.restore()
+            time.sleep(0.2)
+        win.activate()
+    except Exception as exc:
+        emit("warn", f"激活窗口失败：{exc}")
+    time.sleep(0.5)
+
+
+def clamp_region(sct: mss.mss, left: int, top: int, width: int, height: int) -> tuple[int, int, int, int]:
+    screen = sct.monitors[0]
+    s_left, s_top = screen["left"], screen["top"]
+    s_right = s_left + screen["width"]
+    s_bottom = s_top + screen["height"]
+    c_left = max(left, s_left)
+    c_top = max(top, s_top)
+    c_right = min(left + width, s_right)
+    c_bottom = min(top + height, s_bottom)
+    if c_right <= c_left or c_bottom <= c_top:
+        raise RuntimeError("窗口截图区域无效")
+    return c_left, c_top, c_right - c_left, c_bottom - c_top
+
+
+def grab_window(win: Any, sct: mss.mss, save_path: Path) -> tuple[Image.Image, float, int, int, int, int]:
+    wl, wt = int(win.left), int(win.top)
+    ww, wh = int(win.width), int(win.height)
+    area = max(ww * wh, 1)
+    longest = max(ww, wh, 1)
+    scale = min(1.0, math.sqrt(MAX_IMAGE_PIXELS / area), MAX_IMAGE_LONGEST / longest)
+    sw = max(1, round(ww * scale))
+    sh = max(1, round(wh * scale))
+    cap_l, cap_t, cap_w, cap_h = clamp_region(sct, wl, wt, ww, wh)
+    raw = sct.grab({"left": cap_l, "top": cap_t, "width": cap_w, "height": cap_h})
+    img = Image.frombytes("RGB", raw.size, raw.bgra, "raw", "BGRX")
+    if img.size != (sw, sh):
+        img = img.resize((sw, sh), Image.Resampling.LANCZOS)
+    img.save(save_path, format="PNG")
+    return img, scale, sw, sh, wl, wt
+
+
+def image_b64(img: Image.Image) -> str:
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return base64.b64encode(buf.getvalue()).decode("ascii")
+
+
+def extract_json_object(text: str) -> dict[str, Any] | None:
+    text = (text or "").strip()
+    try:
+        value = json.loads(text)
+        return value if isinstance(value, dict) else None
+    except json.JSONDecodeError:
+        pass
+    start = text.find("{")
+    if start < 0:
+        return None
+    depth = 0
+    for idx in range(start, len(text)):
+        if text[idx] == "{":
+            depth += 1
+        elif text[idx] == "}":
+            depth -= 1
+            if depth == 0:
+                try:
+                    value = json.loads(text[start : idx + 1])
+                    return value if isinstance(value, dict) else None
+                except json.JSONDecodeError:
+                    return None
+    return None
+
+
+def ask_mimo(api_key: str, base_url: str, model: str, img: Image.Image, prompt: str) -> str:
+    url = base_url.rstrip("/") + "/chat/completions"
+    payload = {
+        "model": model,
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_b64(img)}"}},
+                ],
+            }
+        ],
+    }
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    resp = requests.post(url, headers=headers, json=payload, timeout=180)
+    if not resp.ok:
+        raise RuntimeError(f"MiMo HTTP {resp.status_code}: {resp.text[:1200]}")
+    data = resp.json()
+    return data["choices"][0]["message"]["content"]
+
+
+def ask_codex(root: Path, img_path: Path, prompt: str, output_path: Path) -> str:
+    cmd = [
+        "codex",
+        "exec",
+        "--ignore-user-config",
+        "--json",
+        "--output-last-message",
+        str(output_path),
+        "--sandbox",
+        "read-only",
+        "--image",
+        str(img_path),
+    ]
+    result = subprocess.run(cmd, input=prompt, text=True, encoding="utf-8", cwd=str(root), capture_output=True, timeout=180)
+    if result.returncode != 0:
+        raise RuntimeError((result.stderr or result.stdout or "Codex CLI 调用失败")[:1200])
+    if output_path.exists():
+        return output_path.read_text(encoding="utf-8")
+    return result.stdout
+
+
+def ask_provider(args: argparse.Namespace, root: Path, img: Image.Image, img_path: Path, prompt: str, output_path: Path) -> str:
+    if args.provider == "codex":
+        return ask_codex(root, img_path, prompt, output_path)
+    if args.provider == "mimo":
+        api_key = args.mimo_api_key or os.getenv("XIAOMI_API_KEY", "")
+        if not api_key:
+            raise RuntimeError("缺少 MiMo API Key")
+        return ask_mimo(api_key, args.mimo_base_url, args.mimo_model, img, prompt)
+    raise RuntimeError(f"未知 AI 引擎：{args.provider}")
+
+
+def to_abs(wl: int, wt: int, scale: float, x: float, y: float) -> tuple[int, int]:
+    return int(wl + x / scale), int(wt + y / scale)
+
+
+def execute_action(action: dict[str, Any], scale: float, wl: int, wt: int) -> str:
+    atype = action.get("type")
+    if atype == "click":
+        abs_x, abs_y = to_abs(wl, wt, scale, float(action["x"]), float(action["y"]))
+        target = str(action.get("target", "目标"))
+        pyautogui.moveTo(abs_x, abs_y, duration=0.25)
+        time.sleep(0.2)
+        pyautogui.click()
+        return f"点击 {target} ({abs_x},{abs_y})"
+    if atype == "type":
+        text = str(action.get("text", ""))
+        pyperclip.copy(text)
+        pyautogui.hotkey("ctrl", "a")
+        time.sleep(0.1)
+        pyautogui.hotkey("ctrl", "v")
+        return f"粘贴输入：{text}"
+    if atype == "key":
+        key = str(action.get("key", "")).lower()
+        pyautogui.press(key)
+        return f"按键：{key}"
+    if atype == "wait":
+        sec = max(0.5, min(10, float(action.get("seconds", 1))))
+        time.sleep(sec)
+        return f"等待 {sec:g} 秒"
+    return f"忽略不支持动作：{atype}"
+
+
+def role_strategy(role: str, task: str) -> str:
+    text = f"{role} {task}".lower()
+    if any(word in text for word in ["游戏", "game", "steam", "roblox"]):
+        return (
+            "这是游戏主播任务。开播前的必要内容是至少一个游戏源/游戏捕获/游戏窗口源；摄像头是可选项。"
+            "必须先确认或添加游戏源；如果没有可捕获游戏窗口，请请求人工协助打开游戏。"
+            "摄像头添加失败或无设备可以记录并跳过。确认画布已有游戏内容后，才进入 Go LIVE 流程。"
+        )
+    if any(word in text for word in ["秀场", "show", "camera", "摄像头"]):
+        return (
+            "这是秀场主播任务。开播前的必要内容是摄像头源和麦克风状态；摄像头是必需项。"
+            "必须先确认或添加摄像头源；如果没有摄像头设备或无法开启，请请求人工协助。"
+            "确认画布已有摄像头画面后，才进入 Go LIVE 流程。"
+        )
+    return "先按角色和任务判断必需内容、设备状态和信息配置；缺少核心前置条件时先补齐或请求人工协助。"
+
+
+def build_step_prompt(task: str, role: str, role_text: str, strategy: str, history: list[dict[str, Any]], sw: int, sh: int, allow_go_live: bool) -> str:
+    log = "\n".join([f"- Step {item['step']}: {item['summary']}" for item in history[-10:]]) or "无"
+    return f"""
+你正在操作 TikTok LIVE Studio。当前截图尺寸为 {sw}x{sh}，动作坐标必须使用截图内坐标。
+
+任务：{task}
+执行角色：{role}
+角色设定：
+{role_text[:1800]}
+
+任务拆解原则：
+{strategy}
+
+已执行操作：
+{log}
+
+要求：
+1. 先理解当前页面和任务缺口，再决定下一步，不要机械寻找某个固定按钮。
+2. 动作只能是 click、type、key、wait。
+3. 游戏主播任务：未确认游戏源前不能进入 Go LIVE；找不到游戏窗口时 need_human=true。
+4. 秀场主播任务：未确认摄像头源前不能进入 Go LIVE；没有摄像头设备时 need_human=true。
+5. 摄像头对游戏主播是可选项，失败可记录并跳过。
+6. 点击主界面 Go LIVE 只是进入开播前确认；Live info 中还要理解标题、topic、封面、About me 和直播设置。
+7. allow_go_live={allow_go_live}；如果为 false，遇到最终真实开播确认必须请求人工协助。
+8. 只有明确看到直播中/开播成功，才 done=true。
+9. 不确定的界面元素标注“不确定”，不要编造。
+
+只输出 JSON：
+{{
+  "done": false,
+  "need_human": false,
+  "reason": "当前判断",
+  "current_state": "当前页面/阶段",
+  "experience_note": "角色体验记录",
+  "action": {{"type":"click","x":123,"y":456,"target":"控件描述"}}
+}}
+"""
+
+
+def build_report_prompt(task: str, role: str, role_text: str, history: list[dict[str, Any]]) -> str:
+    facts = "\n".join(
+        f"- Step {item['step']}: {item['summary']} | 状态：{item.get('current_state','')} | 体验：{item.get('experience_note','')}"
+        for item in history
+    ) or "- 无"
+    return f"""
+请基于真实操作日志和最终截图，输出中文体验报告。不要编造未执行步骤，不确定就写不确定。
+
+任务：{task}
+角色：{role}
+角色设定：
+{role_text[:1200]}
+
+真实操作日志：
+{facts}
+
+报告结构：
+1. 用户人设与关注清单
+2. 任务概述
+3. 认知演变记录
+4. 体验过程分析
+5. 问题与建议汇总
+6. 总体评估与 Top 3 建议
+"""
+
+
+def run(args: argparse.Namespace) -> int:
+    root = Path(args.root).resolve()
+    load_dotenv(root / ".env")
+    run_dir = Path(args.run_dir).resolve()
+    screenshots_dir = run_dir / "screenshots"
+    screenshots_dir.mkdir(parents=True, exist_ok=True)
+
+    if not is_admin():
+        emit("ask_human", "当前不是管理员权限。真实鼠标键盘操作可能失败，请用管理员权限启动本工具")
+        return 2
+
+    win = find_window(args.window_title)
+    if win is None:
+        emit("ask_human", f"未找到窗口：{args.window_title}，请打开 LIVE Studio")
+        return 2
+
+    role_text = Path(args.role_file).read_text(encoding="utf-8") if args.role_file and Path(args.role_file).exists() else ""
+    strategy = role_strategy(args.role, args.task)
+    emit("observe", strategy)
+
+    action_log: list[dict[str, Any]] = []
+    success = False
+    final_img: Image.Image | None = None
+
+    pyautogui.FAILSAFE = True
+    with mss.mss() as sct:
+        for step in range(1, args.max_steps + 1):
+            activate_window(win)
+            img_path = screenshots_dir / f"step_{step:02d}.png"
+            img, scale, sw, sh, wl, wt = grab_window(win, sct, img_path)
+            final_img = img
+            emit("observe", f"Step {step}: 已截图并读取屏幕", screenshot=str(img_path))
+
+            prompt = build_step_prompt(args.task, args.role, role_text, strategy, action_log, sw, sh, args.allow_go_live)
+            output_path = run_dir / f"model_step_{step:02d}.txt"
+            raw = ask_provider(args, root, img, img_path, prompt, output_path)
+            data = extract_json_object(raw)
+            if not data:
+                summary = "模型返回无法解析，等待后重试"
+                emit("warn", summary, raw=raw[:1000])
+                action_log.append({"step": step, "summary": summary, "screenshot": str(img_path)})
+                time.sleep(STEP_SLEEP_SEC)
+                continue
+
+            reason = str(data.get("reason", ""))
+            current_state = str(data.get("current_state", ""))
+            experience_note = str(data.get("experience_note", ""))
+            emit("action", f"Step {step}: {reason}", current_state=current_state, experience_note=experience_note)
+
+            if data.get("need_human"):
+                action_log.append({"step": step, "summary": f"请求人工协助：{reason}", "current_state": current_state, "experience_note": experience_note, "screenshot": str(img_path)})
+                emit("ask_human", reason or "需要人工协助")
+                break
+
+            if data.get("done"):
+                success = True
+                action_log.append({"step": step, "summary": f"任务完成：{reason}", "current_state": current_state, "experience_note": experience_note, "screenshot": str(img_path)})
+                emit("done", reason or "任务完成")
+                break
+
+            action = data.get("action")
+            if not isinstance(action, dict):
+                summary = f"无可执行动作：{reason}"
+                action_log.append({"step": step, "summary": summary, "current_state": current_state, "experience_note": experience_note, "screenshot": str(img_path)})
+                emit("warn", summary)
+                time.sleep(STEP_SLEEP_SEC)
+                continue
+
+            summary = execute_action(action, scale, wl, wt)
+            action_log.append({"step": step, "summary": summary, "current_state": current_state, "experience_note": experience_note, "screenshot": str(img_path), "action": action})
+            emit("done", summary)
+            time.sleep(STEP_SLEEP_SEC)
+
+    if final_img is None:
+        emit("ask_human", "未能生成最终截图")
+        return 2
+
+    final_path = screenshots_dir / "final.png"
+    final_img.save(final_path, format="PNG")
+    (run_dir / "action_log.json").write_text(json.dumps(action_log, ensure_ascii=False, indent=2), encoding="utf-8")
+    report_prompt = build_report_prompt(args.task, args.role, role_text, action_log)
+    report_raw = ask_provider(args, root, final_img, final_path, report_prompt, run_dir / "model_report.txt")
+    report_path = run_dir / "report.md"
+    report_path.write_text(report_raw, encoding="utf-8")
+    result = {"success": success, "action_log": action_log, "reportFile": str(report_path), "logDir": str(run_dir)}
+    (run_dir / "result.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+    emit("finished", "视觉 Agent 执行结束", success=success, reportFile=str(report_path), logDir=str(run_dir))
+    return 0 if success else 1
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--root", required=True)
+    parser.add_argument("--run-dir", required=True)
+    parser.add_argument("--task", required=True)
+    parser.add_argument("--role", required=True)
+    parser.add_argument("--role-file", default="")
+    parser.add_argument("--window-title", default="TikTok LIVE Studio")
+    parser.add_argument("--max-steps", type=int, default=60)
+    parser.add_argument("--allow-go-live", action="store_true")
+    parser.add_argument("--provider", choices=["codex", "mimo"], default="codex")
+    parser.add_argument("--mimo-base-url", default=DEFAULT_MIMO_BASE_URL)
+    parser.add_argument("--mimo-model", default=DEFAULT_MIMO_MODEL)
+    parser.add_argument("--mimo-api-key", default="")
+    return parser.parse_args()
+
+
+if __name__ == "__main__":
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
+    try:
+        raise SystemExit(run(parse_args()))
+    except Exception as exc:
+        emit("error", str(exc))
+        raise SystemExit(1)

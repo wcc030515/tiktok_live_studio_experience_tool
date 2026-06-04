@@ -1,0 +1,7 @@
+mss
+Pillow
+requests
+python-dotenv
+pyautogui
+pygetwindow
+pyperclip

@@ -59,7 +59,7 @@ h1, h2 { margin: 0; font-size: 15px; line-height: 1.25; }
 .panel-body { padding: 14px; }
 label { display: block; margin-bottom: 7px; color: #344054; font-size: 13px; font-weight: 700; }
 
-textarea, select, input[type="number"] {
+textarea, select, input[type="number"], input[type="text"], input[type="password"] {
   width: 100%;
   border: 1px solid #cbd5e1;
   border-radius: 6px;
@@ -70,7 +70,7 @@ textarea, select, input[type="number"] {
 }
 
 textarea { min-height: 108px; padding: 11px 12px; resize: vertical; line-height: 1.55; }
-select, input[type="number"] { height: 38px; padding: 0 10px; }
+select, input[type="number"], input[type="text"], input[type="password"] { height: 38px; padding: 0 10px; }
 
 textarea:focus, select:focus, input:focus {
   border-color: var(--accent);
