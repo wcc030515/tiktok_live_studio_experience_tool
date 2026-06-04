@@ -17,6 +17,28 @@ const LIVE_STUDIO_CDP = "http://127.0.0.1:9222";
 let mainWindow;
 let activeRun = null;
 
+function quotePowerShellString(value) {
+  return `'${String(value).replace(/'/g, "''")}'`;
+}
+
+async function isRunningAsAdmin() {
+  if (process.platform !== "win32") return true;
+  const script = "([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)";
+  const result = await execFileText("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script], { timeout: 10000 });
+  return result.ok && /true/i.test(result.stdout);
+}
+
+async function relaunchAsAdmin() {
+  if (process.platform !== "win32") return false;
+  const relaunchArgs = process.argv.slice(1);
+  const argumentList = relaunchArgs.map((arg) => `"${String(arg).replace(/"/g, '\\"')}"`).join(" ");
+  const command = argumentList
+    ? `Start-Process -FilePath ${quotePowerShellString(process.execPath)} -ArgumentList ${quotePowerShellString(argumentList)} -Verb RunAs`
+    : `Start-Process -FilePath ${quotePowerShellString(process.execPath)} -Verb RunAs`;
+  const result = await execFileText("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command], { timeout: 30000 });
+  return result.ok;
+}
+
 function execFileText(file, args = [], options = {}) {
   return new Promise((resolve) => {
     let actualFile = file;
@@ -1352,6 +1374,14 @@ function createWindow() {
 }
 
 app.whenReady().then(async () => {
+  const admin = await isRunningAsAdmin();
+  if (!admin) {
+    const relaunched = await relaunchAsAdmin();
+    if (relaunched) {
+      app.quit();
+      return;
+    }
+  }
   await fs.mkdir(RUNS_DIR, { recursive: true });
   createWindow();
 });
