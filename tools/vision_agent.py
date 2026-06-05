@@ -300,7 +300,11 @@ def looks_live_success(reason: str, current_state: str, experience_note: str) ->
     false_words = ["live info", "确认页", "开播前", "未开播", "还未开播", "不能进入", "不能开播"]
     timer_like = any(token in text for token in ["00:", "0:0", "计时"])
     performance_like = "live performance" in text
-    return (any(word in text for word in success_words) or (timer_like and performance_like)) and not any(word in text for word in false_words)
+    strong_success = timer_like and performance_like
+    explicit_false = any(word in text for word in ["未开播", "还未开播", "不能进入", "不能开播"])
+    if strong_success and not explicit_false:
+        return True
+    return any(word in text for word in success_words) and not any(word in text for word in false_words)
 
 
 def focus_game_then_live_studio(live_title: str) -> str:
@@ -508,16 +512,21 @@ def run(args: argparse.Namespace) -> int:
     pyautogui.FAILSAFE = True
     with mss.MSS() as sct:
         for step in range(1, args.max_steps + 1):
+            step_started = time.perf_counter()
             activate_window(win)
             img_path = screenshots_dir / f"step_{step:02d}.png"
+            screenshot_started = time.perf_counter()
             img, scale, sw, sh, wl, wt = grab_window(win, sct, img_path)
+            screenshot_seconds = time.perf_counter() - screenshot_started
             final_img = img
             emit("observe", f"Step {step}: 已截图并读取屏幕", screenshot=str(img_path))
 
             prompt = build_step_prompt(args.task, args.role, role_text, strategy, action_log, sw, sh, args.allow_go_live)
             output_path = run_dir / f"model_step_{step:02d}.txt"
             try:
+                ai_started = time.perf_counter()
                 raw = ask_provider(args, root, img, img_path, prompt, output_path)
+                ai_seconds = time.perf_counter() - ai_started
             except Exception as exc:
                 summary = f"AI 调用失败：{exc}"
                 emit("ask_human", summary)
@@ -562,9 +571,15 @@ def run(args: argparse.Namespace) -> int:
                 time.sleep(STEP_SLEEP_SEC)
                 continue
 
+            action_started = time.perf_counter()
             summary = execute_action(action, scale, wl, wt, args.window_title)
+            action_seconds = time.perf_counter() - action_started
             action_log.append({"step": step, "summary": summary, "current_state": current_state, "experience_note": experience_note, "screenshot": str(img_path), "action": action})
             emit("done", summary)
+            emit(
+                "observe",
+                f"性能 Step {step}: 截图 {screenshot_seconds:.2f}s，AI 决策 {ai_seconds:.2f}s，动作 {action_seconds:.2f}s，总计 {time.perf_counter() - step_started:.2f}s"
+            )
             time.sleep(STEP_SLEEP_SEC)
 
     if final_img is None:
@@ -576,7 +591,9 @@ def run(args: argparse.Namespace) -> int:
     (run_dir / "action_log.json").write_text(json.dumps(action_log, ensure_ascii=False, indent=2), encoding="utf-8")
     report_prompt = build_report_prompt(args.task, args.role, role_text, action_log)
     try:
+        report_started = time.perf_counter()
         report_raw = ask_provider(args, root, final_img, final_path, report_prompt, run_dir / "model_report.txt")
+        emit("observe", f"性能 报告生成 AI 调用 {time.perf_counter() - report_started:.2f}s")
     except Exception as exc:
         report_raw = fallback_report(args.task, args.role, action_log, f"报告生成阶段 AI 调用失败：{exc}")
     report_path = run_dir / "report.md"

@@ -246,6 +246,7 @@ async function getScreenInfo() {
 }
 
 async function detectEnvironment() {
+  const admin = await isRunningAsAdmin();
   const codexPath = await findOnPath("codex");
   const codexVersion = codexPath
     ? await execFileText(codexPath, ["--version"], { timeout: 10000 })
@@ -274,10 +275,10 @@ async function detectEnvironment() {
       path: codexPath
     },
     desktop: {
-      status: rpaAvailable ? "ok" : "error",
-      label: rpaAvailable ? "可用" : "不可用",
+      status: rpaAvailable && admin ? "ok" : "error",
+      label: rpaAvailable && admin ? "可用" : "异常",
       detail: rpaAvailable
-        ? `截图 · 鼠标 · 键盘脚本已就绪${cdpVersion?.webSocketDebuggerUrl ? "；CDP 9222 已连接" : "；CDP 9222 未连接"}`
+        ? `${admin ? "管理员权限已就绪" : "当前不是管理员权限，无法稳定点击高权限窗口"}；截图 · 鼠标 · 键盘脚本${admin ? "已就绪" : "可能失败"}${cdpVersion?.webSocketDebuggerUrl ? "；CDP 9222 已连接" : "；CDP 9222 未连接"}`
         : "RPA 脚本缺失"
     },
     screen: {
@@ -1287,6 +1288,20 @@ async function startVisionTask(config) {
   const aiLabel = aiProvider === "codex" ? "Codex CLI" : (config.apiProviderLabel || aiProvider);
   await appendLog(run, "observe", `任务启动，AI 引擎：${aiLabel}`);
 
+  if (!(await isRunningAsAdmin())) {
+    await appendLog(run, "ask_human", "当前不是管理员权限，真实鼠标键盘操作无法稳定执行。请用管理员权限启动本工具后重试。");
+    await fs.writeFile(run.reportFile, "# 任务未启动\n\n当前不是管理员权限，真实鼠标键盘操作无法稳定执行。请用管理员权限启动本工具后重试。\n", "utf8");
+    return finishRun(run, "任务未启动", "0 步", {
+      issues: [{
+        title: "桌面操作能力未以管理员权限启动",
+        severity: "Critical",
+        description: "当前工具进程不是管理员权限，无法稳定点击或输入到高权限 Live Studio 窗口。"
+      }],
+      reportFile: run.reportFile,
+      logDir: run.dir
+    }, 0);
+  }
+
   const liveReady = /live studio/i.test(config.task) ? await ensureLiveStudioRunning(run) : true;
   if (!liveReady) {
     await fs.writeFile(run.reportFile, "# 任务失败\n\n未能启动或找到 Live Studio。", "utf8");
@@ -1405,7 +1420,8 @@ function createWindow() {
 }
 
 app.whenReady().then(async () => {
-  const admin = await isRunningAsAdmin();
+  const skipAdminRelaunch = process.env.LIVE_ASSISTANT_SKIP_ADMIN === "1" || process.argv.includes("--skip-admin-relaunch");
+  const admin = skipAdminRelaunch ? true : await isRunningAsAdmin();
   if (!admin) {
     const relaunched = await relaunchAsAdmin();
     if (relaunched) {
