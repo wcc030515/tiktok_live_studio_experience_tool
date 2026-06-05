@@ -16,6 +16,7 @@
       "output": "dist"
     },
     "files": [
+      "assets/**/*",
       "src/**/*",
       "roles/**/*",
       "schemas/**/*",
@@ -24,6 +25,7 @@
     ],
     "win": {
       "target": "nsis",
+      "icon": "assets/icon.ico",
       "requestedExecutionLevel": "requireAdministrator"
     }
   },

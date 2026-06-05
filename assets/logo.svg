@@ -1,0 +1,22 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="160" y1="120" x2="860" y2="900" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#06101D"/>
+      <stop offset="0.55" stop-color="#101827"/>
+      <stop offset="1" stop-color="#151122"/>
+    </linearGradient>
+    <filter id="glow" x="120" y="100" width="800" height="820" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="18" result="blur"/>
+      <feBlend in="SourceGraphic" in2="blur" mode="screen"/>
+    </filter>
+  </defs>
+  <rect x="112" y="112" width="800" height="800" rx="206" fill="url(#bg)"/>
+  <path d="M574 238H690C702 333 752 389 835 406V521C778 521 728 506 686 476V655C686 763 604 833 501 833C407 833 331 768 331 676C331 585 401 517 492 517C507 517 523 519 538 524V642C525 634 511 630 495 630C462 630 437 653 437 684C437 716 463 738 498 738C536 738 574 713 574 653V238Z" fill="#25F4EE" opacity="0.95" filter="url(#glow)"/>
+  <path d="M604 218H720C732 313 782 369 865 386V501C808 501 758 486 716 456V635C716 743 634 813 531 813C437 813 361 748 361 656C361 565 431 497 522 497C537 497 553 499 568 504V622C555 614 541 610 525 610C492 610 467 633 467 664C467 696 493 718 528 718C566 718 604 693 604 633V218Z" fill="#FE2C55" opacity="0.95" filter="url(#glow)"/>
+  <path d="M589 228H705C717 323 767 379 850 396V511C793 511 743 496 701 466V645C701 753 619 823 516 823C422 823 346 758 346 666C346 575 416 507 507 507C522 507 538 509 553 514V632C540 624 526 620 510 620C477 620 452 643 452 674C452 706 478 728 513 728C551 728 589 703 589 643V228Z" fill="white"/>
+  <ellipse cx="536" cy="543" rx="138" ry="92" fill="#101827"/>
+  <ellipse cx="536" cy="543" rx="95" ry="62" fill="white"/>
+  <circle cx="536" cy="543" r="37" fill="#111827"/>
+  <circle cx="550" cy="526" r="12" fill="#25F4EE"/>
+  <path d="M432 543C459 492 496 467 536 467C576 467 613 492 640 543C613 594 576 619 536 619C496 619 459 594 432 543Z" stroke="#FE2C55" stroke-width="22" stroke-linecap="round" stroke-linejoin="round" opacity="0.95"/>
+</svg>

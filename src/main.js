@@ -10,6 +10,7 @@ const RPA_SCRIPT = path.join(ROOT, "tools", "rpa-control.ps1");
 const VERIFY_LIVE_RPA_SCRIPT = path.join(ROOT, "tools", "verify-live-rpa.ps1");
 const VISION_AGENT_SCRIPT = path.join(ROOT, "tools", "vision_agent.py");
 const ACTION_SCHEMA = path.join(ROOT, "schemas", "action.schema.json");
+const APP_ICON = path.join(ROOT, "assets", "icon.ico");
 const LIVE_STUDIO_EXE = "C:\\Program Files\\TikTok LIVE Studio\\1.29.0\\TikTok LIVE Studio.exe";
 const LIVE_STUDIO_LAUNCHER_EXE = "C:\\Program Files\\TikTok LIVE Studio\\TikTok LIVE Studio Launcher.exe";
 const LIVE_STUDIO_CDP = "http://127.0.0.1:9222";
@@ -1385,6 +1386,7 @@ function createWindow() {
     minWidth: 590,
     minHeight: 560,
     title: "LIVE Studio experience assistant",
+    icon: APP_ICON,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
