@@ -52,7 +52,13 @@ def activate_window(win: Any) -> None:
         if win.isMinimized:
             win.restore()
             time.sleep(0.2)
-        win.activate()
+        active = gw.getActiveWindow()
+        active_title = (active.title or "").lower() if active else ""
+        target_title = (win.title or "").lower()
+        # Re-activating an already focused Electron window can close transient popups
+        # such as select/dropdown menus, so only activate when focus is actually elsewhere.
+        if not target_title or target_title not in active_title:
+            win.activate()
     except Exception as exc:
         emit("warn", f"激活窗口失败：{exc}")
     time.sleep(0.5)
@@ -290,8 +296,15 @@ def execute_action(action: dict[str, Any], scale: float, wl: int, wt: int, live_
         target = str(action.get("target", "目标"))
         pyautogui.moveTo(abs_x, abs_y, duration=0.25)
         time.sleep(0.2)
-        pyautogui.click()
+        pyautogui.click(clicks=1, interval=0)
         return f"点击 {target} ({abs_x},{abs_y})"
+    if atype == "double_click":
+        abs_x, abs_y = to_abs(wl, wt, scale, float(action["x"]), float(action["y"]))
+        target = str(action.get("target", "目标"))
+        pyautogui.moveTo(abs_x, abs_y, duration=0.25)
+        time.sleep(0.2)
+        pyautogui.doubleClick(interval=0.08)
+        return f"双击 {target} ({abs_x},{abs_y})"
     if atype == "type":
         text = str(action.get("text", ""))
         pyperclip.copy(text)
@@ -350,7 +363,7 @@ def build_step_prompt(task: str, role: str, role_text: str, strategy: str, histo
 
 要求：
 1. 先理解当前页面和任务缺口，再决定下一步，不要机械寻找某个固定按钮。
-2. 动作只能是 click、type、key、wait、focus_game_then_live_studio。
+2. 动作只能是 click、double_click、type、key、wait、focus_game_then_live_studio。LIVE Studio 内部按钮、tab、下拉框、列表项、复选框都必须用 click 单击；只有打开桌面程序快捷方式、文件、文件夹时才允许 double_click。
 3. 游戏主播任务：未添加游戏源前不能进入 Go LIVE；找不到游戏窗口时 need_human=true。添加游戏源时优先手动选择具体游戏进程/游戏窗口，其次才用 Any full-screen game/自动捕获。
 4. 秀场主播任务：未确认摄像头源前不能进入 Go LIVE；没有摄像头设备时 need_human=true。
 5. 摄像头对游戏主播是可选项，失败可记录并跳过。
@@ -365,6 +378,7 @@ def build_step_prompt(task: str, role: str, role_text: str, strategy: str, histo
 14. “完成游戏开播/完成 Go LIVE”的任务目标优先级高于画布质量门槛；画面异常写进报告，但仍继续开播。
 15. 如果点击最终 Go LIVE 后，主界面 Go LIVE 按钮区域变成直播计时/运行时长，或页面出现 LIVE performance 且底部显示 00:xx 计时，即视为开播成功，可以 done=true。
 16. 如果出现测试环境 warning / internal test warning，先点击 Got it / OK 关闭；关闭后看到直播计时即可结束体验。
+17. 点击 Select game 下拉框后，如果下拉列表出现，下一步应单击目标游戏进程/窗口选项，不要再次点击下拉框本体；如果列表没有出现，先 wait 或请求人工协助，不要连续重复点击导致列表收起。
 
 只输出 JSON：
 {{
