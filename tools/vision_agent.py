@@ -219,9 +219,26 @@ def should_finish_require_live(task: str) -> bool:
 
 def looks_live_success(reason: str, current_state: str, experience_note: str) -> bool:
     text = f"{reason} {current_state} {experience_note}".lower()
-    success_words = ["已开播", "开播成功", "直播中", "正在直播", "live now", "you are live", "直播已开始"]
+    success_words = [
+        "已开播",
+        "开播成功",
+        "直播中",
+        "正在直播",
+        "live now",
+        "you are live",
+        "直播已开始",
+        "live performance",
+        "计时",
+        "计时状态",
+        "直播计时",
+        "进入直播",
+        "已进入直播",
+        "处于直播",
+    ]
     false_words = ["live info", "确认页", "开播前", "未开播", "还未开播", "不能进入", "不能开播"]
-    return any(word in text for word in success_words) and not any(word in text for word in false_words)
+    timer_like = any(token in text for token in ["00:", "0:0", "计时"])
+    performance_like = "live performance" in text
+    return (any(word in text for word in success_words) or (timer_like and performance_like)) and not any(word in text for word in false_words)
 
 
 def focus_game_then_live_studio(live_title: str) -> str:
@@ -346,6 +363,8 @@ def build_step_prompt(task: str, role: str, role_text: str, strategy: str, histo
 12. 游戏源已添加但画布黑屏/捕获失败是体验问题，不是终止任务的理由；聚焦重试或人工协助后仍异常，也要继续完成 Go LIVE 开播流程。
 13. 当 need_human=true 时，工具会等待用户点击“已完成人工协助”；点击后必须基于下一张新截图重新判断当前状态，不要沿用旧截图结论。
 14. “完成游戏开播/完成 Go LIVE”的任务目标优先级高于画布质量门槛；画面异常写进报告，但仍继续开播。
+15. 如果点击最终 Go LIVE 后，主界面 Go LIVE 按钮区域变成直播计时/运行时长，或页面出现 LIVE performance 且底部显示 00:xx 计时，即视为开播成功，可以 done=true。
+16. 如果出现测试环境 warning / internal test warning，先点击 Got it / OK 关闭；关闭后看到直播计时即可结束体验。
 
 只输出 JSON：
 {{
