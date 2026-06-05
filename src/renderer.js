@@ -12,6 +12,49 @@ let envPassed = false;
 let issueImages = [];
 let lastEnv = null;
 
+const PROVIDER_PRESETS = {
+  openai: {
+    label: "ChatGPT API",
+    baseUrl: "https://api.openai.com/v1",
+    model: "gpt-4o"
+  },
+  gemini: {
+    label: "Gemini API",
+    baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
+    model: "gemini-2.5-pro"
+  },
+  deepseek: {
+    label: "DeepSeek API",
+    baseUrl: "https://api.deepseek.com/v1",
+    model: "deepseek-chat"
+  },
+  qwen: {
+    label: "千问 API",
+    baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    model: "qwen-vl-max"
+  },
+  minimax: {
+    label: "Minimax API",
+    baseUrl: "https://api.minimax.chat/v1",
+    model: "MiniMax-Text-01"
+  },
+  claude: {
+    label: "Claude API",
+    baseUrl: "https://api.anthropic.com/v1",
+    model: "claude-3-5-sonnet-latest"
+  },
+  mimo: {
+    label: "MiMo API",
+    baseUrl: "https://token-plan-cn.xiaomimimo.com/v1",
+    model: "mimo-v2-omni"
+  },
+  custom: {
+    label: "自定义 API",
+    baseUrl: "",
+    model: ""
+  }
+};
+
 function show(id) {
   document.querySelectorAll(".screen").forEach((screen) => {
     screen.classList.toggle("active", screen.id === id);
@@ -61,8 +104,35 @@ function computeEnvPassed() {
   if (!lastEnv) return false;
   const baseOk = ["ok", "warn"].includes(lastEnv.liveStudio?.status) && lastEnv.desktop?.status === "ok";
   if (!baseOk) return false;
-  if ($("#ai-provider")?.value === "mimo") return true;
+  if ($("#ai-provider")?.value !== "codex") return true;
   return lastEnv.codex?.status === "ok";
+}
+
+function providerStorageKey(provider, field) {
+  return `aiProvider.${provider}.${field}`;
+}
+
+function getProviderPreset(provider) {
+  return PROVIDER_PRESETS[provider] || PROVIDER_PRESETS.custom;
+}
+
+function readApiConfigFromUi() {
+  const provider = $("#ai-provider").value;
+  const preset = getProviderPreset(provider);
+  return {
+    provider,
+    providerLabel: preset.label,
+    baseUrl: $("#api-base-url")?.value.trim() || "",
+    model: $("#api-model")?.value.trim() || "",
+    apiKey: $("#api-key")?.value.trim() || localStorage.getItem(providerStorageKey(provider, "apiKey")) || ""
+  };
+}
+
+function hasValidAiConfig() {
+  const provider = $("#ai-provider")?.value || "codex";
+  if (provider === "codex") return envPassed;
+  const api = readApiConfigFromUi();
+  return Boolean(api.baseUrl && api.model && api.apiKey);
 }
 
 async function refreshEnv() {
@@ -83,11 +153,14 @@ function updateStartButton() {
   const button = $("#start-task");
   const hasTask = Boolean($("#task").value.trim());
   envPassed = computeEnvPassed();
-  const canStart = envPassed && hasTask;
+  const aiReady = hasValidAiConfig();
+  const canStart = envPassed && aiReady && hasTask;
   button.classList.toggle("disabled", !canStart);
   button.setAttribute("aria-disabled", canStart ? "false" : "true");
   if (!hasTask) {
     button.title = "请输入任务";
+  } else if (!aiReady) {
+    button.title = "请填写当前 AI 引擎的 API 地址、模型名称和 Key";
   } else if (!envPassed) {
     button.title = "请确保通过环境检测";
   } else {
@@ -106,11 +179,14 @@ function selectedReportType() {
 
 function readConfig() {
   const provider = $("#ai-provider").value;
+  const api = readApiConfigFromUi();
   localStorage.setItem("aiProvider", provider);
-  localStorage.setItem("mimoBaseUrl", $("#mimo-base-url").value.trim());
-  localStorage.setItem("mimoModel", $("#mimo-model").value.trim());
-  if ($("#mimo-api-key").value.trim()) {
-    localStorage.setItem("mimoApiKey", $("#mimo-api-key").value.trim());
+  if (provider !== "codex") {
+    localStorage.setItem(providerStorageKey(provider, "baseUrl"), api.baseUrl);
+    localStorage.setItem(providerStorageKey(provider, "model"), api.model);
+    if ($("#api-key").value.trim()) {
+      localStorage.setItem(providerStorageKey(provider, "apiKey"), $("#api-key").value.trim());
+    }
   }
   return {
     task: $("#task").value.trim(),
@@ -121,15 +197,28 @@ function readConfig() {
     allowRealGoLive: $("#allow-live").checked,
     saveScreenshots: $("#save-shots").checked,
     aiProvider: provider,
-    mimoBaseUrl: $("#mimo-base-url").value.trim(),
-    mimoModel: $("#mimo-model").value.trim(),
-    mimoApiKey: $("#mimo-api-key").value.trim() || localStorage.getItem("mimoApiKey") || ""
+    apiProviderLabel: api.providerLabel,
+    apiBaseUrl: api.baseUrl,
+    apiModel: api.model,
+    apiKey: api.apiKey,
+    // Keep legacy MiMo fields for old runs and scripts that may still read them.
+    mimoBaseUrl: api.baseUrl,
+    mimoModel: api.model,
+    mimoApiKey: api.apiKey
   };
 }
 
 function updateProviderUi() {
-  const isMimo = $("#ai-provider").value === "mimo";
-  $("#mimo-settings").hidden = !isMimo;
+  const provider = $("#ai-provider").value;
+  const isApiProvider = provider !== "codex";
+  $("#api-settings").hidden = !isApiProvider;
+  if (isApiProvider) {
+    const preset = getProviderPreset(provider);
+    $("#api-base-url").value = localStorage.getItem(providerStorageKey(provider, "baseUrl")) || preset.baseUrl;
+    $("#api-model").value = localStorage.getItem(providerStorageKey(provider, "model")) || preset.model;
+    $("#api-key").value = localStorage.getItem(providerStorageKey(provider, "apiKey")) || "";
+    $("#api-key").placeholder = `请输入 ${preset.label} Key`;
+  }
   updateStartButton();
 }
 
@@ -248,11 +337,18 @@ document.querySelectorAll("#report-type button").forEach((button) => {
 $("#refresh-env").addEventListener("click", refreshEnv);
 $("#task").addEventListener("input", updateStartButton);
 $("#ai-provider").addEventListener("change", updateProviderUi);
+["#api-base-url", "#api-model", "#api-key"].forEach((selector) => {
+  $(selector)?.addEventListener("input", updateStartButton);
+});
 $("#open-roles").addEventListener("click", () => window.inspector.openRolesDir());
 $("#start-task").addEventListener("click", async () => {
   const config = readConfig();
   if (!config.task) {
     alert("请输入任务");
+    return;
+  }
+  if (!hasValidAiConfig()) {
+    alert("请填写当前 AI 引擎的 API 地址、模型名称和 Key");
     return;
   }
   if (!envPassed) {
@@ -296,8 +392,5 @@ window.inspector.onTaskFinished((payload) => {
 
 loadRoles();
 $("#ai-provider").value = localStorage.getItem("aiProvider") || "codex";
-$("#mimo-base-url").value = localStorage.getItem("mimoBaseUrl") || "https://token-plan-cn.xiaomimimo.com/v1";
-$("#mimo-model").value = localStorage.getItem("mimoModel") || "mimo-v2-omni";
-$("#mimo-api-key").value = localStorage.getItem("mimoApiKey") || "";
 updateProviderUi();
 refreshEnv();

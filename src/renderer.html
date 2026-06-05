@@ -60,23 +60,30 @@
                   <label for="ai-provider">AI 引擎</label>
                   <select id="ai-provider">
                     <option value="codex" selected>Codex CLI</option>
+                    <option value="openai">ChatGPT API</option>
+                    <option value="gemini">Gemini API</option>
+                    <option value="deepseek">DeepSeek API</option>
+                    <option value="qwen">千问 API</option>
+                    <option value="minimax">Minimax API</option>
+                    <option value="claude">Claude API</option>
                     <option value="mimo">MiMo API</option>
+                    <option value="custom">自定义 OpenAI-compatible API</option>
                   </select>
                 </div>
               </div>
 
-              <div class="field-row mimo-settings" id="mimo-settings" hidden>
+              <div class="field-row api-settings" id="api-settings" hidden>
                 <div>
-                  <label for="mimo-model">MiMo 模型</label>
-                  <input id="mimo-model" type="text" value="mimo-v2-omni" />
+                  <label for="api-model">模型名称</label>
+                  <input id="api-model" type="text" />
                 </div>
                 <div>
-                  <label for="mimo-base-url">MiMo API 地址</label>
-                  <input id="mimo-base-url" type="text" value="https://token-plan-cn.xiaomimimo.com/v1" />
+                  <label for="api-base-url">API 地址</label>
+                  <input id="api-base-url" type="text" />
                 </div>
                 <div>
-                  <label for="mimo-api-key">MiMo API Key</label>
-                  <input id="mimo-api-key" type="password" placeholder="请输入 MiMo API Key" />
+                  <label for="api-key">API Key</label>
+                  <input id="api-key" type="password" placeholder="请输入当前模型的 API Key" />
                 </div>
               </div>
 

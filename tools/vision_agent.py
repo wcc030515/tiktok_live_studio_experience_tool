@@ -25,6 +25,16 @@ from PIL import Image
 
 DEFAULT_MIMO_BASE_URL = "https://token-plan-cn.xiaomimimo.com/v1"
 DEFAULT_MIMO_MODEL = "mimo-v2-omni"
+DEFAULT_API_PRESETS = {
+    "openai": ("https://api.openai.com/v1", "gpt-4o"),
+    "gemini": ("https://generativelanguage.googleapis.com/v1beta/openai", "gemini-2.5-pro"),
+    "deepseek": ("https://api.deepseek.com/v1", "deepseek-chat"),
+    "qwen": ("https://dashscope.aliyuncs.com/compatible-mode/v1", "qwen-vl-max"),
+    "minimax": ("https://api.minimax.chat/v1", "MiniMax-Text-01"),
+    "claude": ("https://api.anthropic.com/v1", "claude-3-5-sonnet-latest"),
+    "mimo": (DEFAULT_MIMO_BASE_URL, DEFAULT_MIMO_MODEL),
+    "custom": ("", ""),
+}
 MAX_IMAGE_PIXELS = 1_000_000
 MAX_IMAGE_LONGEST = 1400
 STEP_SLEEP_SEC = 1.0
@@ -126,7 +136,7 @@ def extract_json_object(text: str) -> dict[str, Any] | None:
     return None
 
 
-def ask_mimo(api_key: str, base_url: str, model: str, img: Image.Image, prompt: str) -> str:
+def ask_openai_compatible(provider: str, api_key: str, base_url: str, model: str, img: Image.Image, prompt: str) -> str:
     url = base_url.rstrip("/") + "/chat/completions"
     payload = {
         "model": model,
@@ -143,9 +153,43 @@ def ask_mimo(api_key: str, base_url: str, model: str, img: Image.Image, prompt: 
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     resp = requests.post(url, headers=headers, json=payload, timeout=180)
     if not resp.ok:
-        raise RuntimeError(f"MiMo HTTP {resp.status_code}: {resp.text[:1200]}")
+        raise RuntimeError(f"{provider} HTTP {resp.status_code}: {resp.text[:1200]}")
     data = resp.json()
     return data["choices"][0]["message"]["content"]
+
+
+def ask_claude(api_key: str, base_url: str, model: str, img: Image.Image, prompt: str) -> str:
+    url = base_url.rstrip("/") + "/messages"
+    payload = {
+        "model": model,
+        "max_tokens": 4096,
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "image/png",
+                            "data": image_b64(img),
+                        },
+                    },
+                ],
+            }
+        ],
+    }
+    headers = {
+        "x-api-key": api_key,
+        "anthropic-version": "2023-06-01",
+        "Content-Type": "application/json",
+    }
+    resp = requests.post(url, headers=headers, json=payload, timeout=180)
+    if not resp.ok:
+        raise RuntimeError(f"Claude HTTP {resp.status_code}: {resp.text[:1200]}")
+    data = resp.json()
+    return "".join(part.get("text", "") for part in data.get("content", []) if part.get("type") == "text")
 
 
 def ask_codex(codex_path: str, root: Path, img_path: Path, prompt: str, output_path: Path) -> str:
@@ -177,11 +221,23 @@ def ask_codex(codex_path: str, root: Path, img_path: Path, prompt: str, output_p
 def ask_provider(args: argparse.Namespace, root: Path, img: Image.Image, img_path: Path, prompt: str, output_path: Path) -> str:
     if args.provider == "codex":
         return ask_codex(args.codex_path, root, img_path, prompt, output_path)
-    if args.provider == "mimo":
-        api_key = args.mimo_api_key or os.getenv("XIAOMI_API_KEY", "")
-        if not api_key:
-            raise RuntimeError("缺少 MiMo API Key")
-        return ask_mimo(api_key, args.mimo_base_url, args.mimo_model, img, prompt)
+
+    preset_base_url, preset_model = DEFAULT_API_PRESETS.get(args.provider, DEFAULT_API_PRESETS["custom"])
+    legacy_mimo_base_url = args.mimo_base_url if args.provider == "mimo" else ""
+    legacy_mimo_model = args.mimo_model if args.provider == "mimo" else ""
+    base_url = args.api_base_url or legacy_mimo_base_url or preset_base_url
+    model = args.api_model or legacy_mimo_model or preset_model
+    api_key = args.api_key or args.mimo_api_key or os.getenv("AI_API_KEY", "") or os.getenv("XIAOMI_API_KEY", "")
+    if not base_url:
+        raise RuntimeError(f"缺少 {args.provider} API 地址")
+    if not model:
+        raise RuntimeError(f"缺少 {args.provider} 模型名称")
+    if not api_key:
+        raise RuntimeError(f"缺少 {args.provider} API Key")
+    if args.provider == "claude":
+        return ask_claude(api_key, base_url, model, img, prompt)
+    if args.provider in DEFAULT_API_PRESETS:
+        return ask_openai_compatible(args.provider, api_key, base_url, model, img, prompt)
     raise RuntimeError(f"未知 AI 引擎：{args.provider}")
 
 
@@ -541,9 +597,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--window-title", default="TikTok LIVE Studio")
     parser.add_argument("--max-steps", type=int, default=60)
     parser.add_argument("--allow-go-live", action="store_true")
-    parser.add_argument("--provider", choices=["codex", "mimo"], default="codex")
+    parser.add_argument(
+        "--provider",
+        choices=["codex", "openai", "gemini", "deepseek", "qwen", "minimax", "claude", "mimo", "custom"],
+        default="codex",
+    )
     parser.add_argument("--codex-path", default="")
     parser.add_argument("--human-signal", default="")
+    parser.add_argument("--api-base-url", default="")
+    parser.add_argument("--api-model", default="")
+    parser.add_argument("--api-key", default="")
     parser.add_argument("--mimo-base-url", default=DEFAULT_MIMO_BASE_URL)
     parser.add_argument("--mimo-model", default=DEFAULT_MIMO_MODEL)
     parser.add_argument("--mimo-api-key", default="")

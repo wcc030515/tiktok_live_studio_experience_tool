@@ -1283,7 +1283,9 @@ async function startVisionTask(config) {
   activeRun = run;
 
   send("task:started", { dir });
-  await appendLog(run, "observe", `任务启动，AI 引擎：${config.aiProvider === "mimo" ? "MiMo API" : "Codex CLI"}`);
+  const aiProvider = config.aiProvider || "codex";
+  const aiLabel = aiProvider === "codex" ? "Codex CLI" : (config.apiProviderLabel || aiProvider);
+  await appendLog(run, "observe", `任务启动，AI 引擎：${aiLabel}`);
 
   const liveReady = /live studio/i.test(config.task) ? await ensureLiveStudioRunning(run) : true;
   if (!liveReady) {
@@ -1305,23 +1307,29 @@ async function startVisionTask(config) {
     "--window-title", "TikTok LIVE Studio",
     "--max-steps", String(config.maxSteps || 60),
     "--human-signal", run.humanSignalFile,
-    "--provider", config.aiProvider || "codex"
+    "--provider", aiProvider
   ];
-  if ((config.aiProvider || "codex") === "codex") {
+  if (aiProvider === "codex") {
     const codexPath = await findOnPath("codex");
     if (codexPath) args.push("--codex-path", codexPath);
   }
   if (config.allowRealGoLive) args.push("--allow-go-live");
-  if (config.aiProvider === "mimo") {
-    args.push("--mimo-base-url", config.mimoBaseUrl || "https://token-plan-cn.xiaomimimo.com/v1");
-    args.push("--mimo-model", config.mimoModel || "mimo-v2-omni");
+  if (aiProvider !== "codex") {
+    args.push("--api-base-url", config.apiBaseUrl || config.mimoBaseUrl || "");
+    args.push("--api-model", config.apiModel || config.mimoModel || "");
+    args.push("--api-key", config.apiKey || config.mimoApiKey || "");
   }
 
   await appendLog(run, "observe", `已加载角色：${selected?.name || config.role}`);
   const child = spawn("python", args, {
     cwd: ROOT,
     windowsHide: true,
-    env: { ...process.env, PYTHONIOENCODING: "utf-8", XIAOMI_API_KEY: config.mimoApiKey || process.env.XIAOMI_API_KEY || "" }
+    env: {
+      ...process.env,
+      PYTHONIOENCODING: "utf-8",
+      AI_API_KEY: config.apiKey || config.mimoApiKey || process.env.AI_API_KEY || "",
+      XIAOMI_API_KEY: config.apiKey || config.mimoApiKey || process.env.XIAOMI_API_KEY || ""
+    }
   });
   run.child = child;
 
