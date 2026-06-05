@@ -5,6 +5,7 @@ const logEl = $("#log");
 
 let reportFile = null;
 let logDir = null;
+let larkDocUrl = null;
 let startedAt = null;
 let timer = null;
 let stepCount = 0;
@@ -369,6 +370,7 @@ $("#human-done").addEventListener("click", async () => {
 });
 $("#back-home").addEventListener("click", () => show("prepare"));
 $("#open-report").addEventListener("click", () => reportFile && window.inspector.openFile(reportFile));
+$("#open-lark-doc").addEventListener("click", () => larkDocUrl && window.inspector.openUrl(larkDocUrl));
 $("#open-log-dir").addEventListener("click", () => logDir && window.inspector.openDir(logDir));
 
 window.inspector.onEnvUpdate(renderEnv);
@@ -384,8 +386,10 @@ window.inspector.onTaskFinished((payload) => {
   clearInterval(timer);
   reportFile = payload.reportFile;
   logDir = payload.logDir;
+  larkDocUrl = payload.larkDocUrl || null;
+  $("#open-lark-doc").hidden = !larkDocUrl;
   $("#done-title").textContent = payload.status;
-  $("#done-summary").textContent = `共执行 ${payload.steps} 步 · ${payload.duration} · 发现 ${payload.issues.length} 个问题 · 本地报告已生成`;
+  $("#done-summary").textContent = `共执行 ${payload.steps} 步 · ${payload.duration} · 发现 ${payload.issues.length} 个问题 · 本地报告已生成${larkDocUrl ? " · 飞书文档已生成" : ""}`;
   renderIssues(payload.issues);
   show("done");
 });

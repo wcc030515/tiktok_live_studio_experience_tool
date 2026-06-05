@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld("inspector", {
   imageDataUrl: (filePath) => ipcRenderer.invoke("image:dataUrl", filePath),
   openFile: (filePath) => ipcRenderer.invoke("file:open", filePath),
   openDir: (dirPath) => ipcRenderer.invoke("dir:open", dirPath),
+  openUrl: (url) => ipcRenderer.invoke("url:open", url),
   onEnvUpdate: (callback) => ipcRenderer.on("env:update", (_event, payload) => callback(payload)),
   onTaskStarted: (callback) => ipcRenderer.on("task:started", (_event, payload) => callback(payload)),
   onTaskLog: (callback) => ipcRenderer.on("task:log", (_event, payload) => callback(payload)),

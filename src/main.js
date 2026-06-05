@@ -87,6 +87,44 @@ function firstLine(text) {
   return (text || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean)[0] || "";
 }
 
+function markdownEscapeInline(value) {
+  return String(value ?? "").replace(/\s+/g, " ").trim().replace(/[\\`*_{}[\]()#+\-.!|]/g, "\\$&");
+}
+
+function larkTitleFromTask(task) {
+  const shortTask = String(task || "体验任务").replace(/\s+/g, " ").trim().slice(0, 36);
+  const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+  return `LIVE Studio 体验报告｜${shortTask || "体验任务"}｜${stamp}`;
+}
+
+function buildLarkMarkdown(title, reportMarkdown, actions) {
+  const body = String(reportMarkdown || "").replace(/^# .+\n+/, "").trim();
+  const lines = [
+    `# ${title}`,
+    "",
+    body || "本次任务未生成有效报告正文，请查看日志目录。",
+    "",
+    "---",
+    "",
+    "## 逐步截图证据",
+    "",
+    "以下截图由工具按真实操作过程自动采集，并上传到飞书文档。正文中的问题可通过 Step 编号回溯到对应画面。"
+  ];
+  for (const item of actions) {
+    if (item.finalScreenshot) continue;
+    const step = String(item.step ?? "").padStart(2, "0");
+    const summary = markdownEscapeInline(item.summary || item.current_state || `Step ${step}`);
+    const note = markdownEscapeInline(item.experience_note || "");
+    lines.push("", `### 【截图 Step ${step}】`, "", `- 操作/观察：${summary}`);
+    if (note) lines.push(`- 角色感受：${note}`);
+  }
+  const hasFinal = actions.some((item) => item.finalScreenshot);
+  if (hasFinal) {
+    lines.push("", "### 【截图 Final】", "", "- 最终画面截图。");
+  }
+  return lines.join("\n") + "\n";
+}
+
 async function findOnPath(command) {
   const result = await execFileText("where.exe", [command], { timeout: 10000 });
   if (!result.ok) return null;
@@ -1199,7 +1237,8 @@ function finishRun(run, status, duration, report, steps) {
     duration,
     issues: report.issues,
     reportFile: report.reportFile,
-    logDir: report.logDir
+    logDir: report.logDir,
+    larkDocUrl: report.larkDocUrl || null
   });
 }
 
@@ -1210,6 +1249,96 @@ function mapVisionEventType(event) {
   if (event === "action") return "action";
   if (event === "done") return "done";
   return "observe";
+}
+
+async function createLarkReport(run, config, result) {
+  const larkCli = await findOnPath("lark-cli");
+  if (!larkCli) {
+    await appendLog(run, "issue", "未找到 lark-cli，无法创建飞书报告文档");
+    return null;
+  }
+  const actions = Array.isArray(result.actionLog) ? result.actionLog : [];
+  if (actions.length === 0) {
+    await appendLog(run, "issue", "未找到 action_log，飞书报告将只包含正文");
+  }
+  const reportMarkdown = (await pathExists(result.reportFile))
+    ? await fs.readFile(result.reportFile, "utf8")
+    : "# LIVE Studio 体验报告\n\n本地报告文件缺失。";
+  const finalScreenshot = path.join(run.dir, "screenshots", "final.png");
+  const actionsWithFinal = [...actions];
+  if (await pathExists(finalScreenshot)) {
+    actionsWithFinal.push({
+      step: "Final",
+      summary: "最终画面",
+      screenshot: finalScreenshot,
+      finalScreenshot: true
+    });
+  }
+
+  const title = larkTitleFromTask(config.task);
+  const larkMarkdownPath = path.join(run.dir, "lark_report.md");
+  await fs.writeFile(larkMarkdownPath, buildLarkMarkdown(title, reportMarkdown, actionsWithFinal), "utf8");
+  const larkMarkdownArg = path.relative(ROOT, larkMarkdownPath);
+  await appendLog(run, "observe", "正在创建飞书报告文档");
+  const create = await execFileText(larkCli, [
+    "docs",
+    "+create",
+    "--api-version",
+    "v2",
+    "--doc-format",
+    "markdown",
+    "--content",
+    `@${larkMarkdownArg}`
+  ], { timeout: 120000 });
+  if (!create.ok) {
+    await appendLog(run, "issue", `飞书报告创建失败：${create.stderr || create.stdout || create.error || "未知错误"}`);
+    return null;
+  }
+  let docUrl = null;
+  try {
+    const parsed = JSON.parse(create.stdout);
+    docUrl = parsed?.data?.document?.url || null;
+  } catch {
+    await appendLog(run, "issue", "飞书报告创建成功但返回结果解析失败");
+  }
+  if (!docUrl) {
+    await appendLog(run, "issue", "飞书报告创建成功但未返回文档链接");
+    return null;
+  }
+
+  let uploaded = 0;
+  for (const item of actionsWithFinal) {
+    const screenshot = item.screenshot;
+    if (!screenshot || !(await pathExists(screenshot))) continue;
+    const screenshotArg = path.relative(ROOT, screenshot);
+    const step = item.step === "Final" ? "Final" : String(item.step ?? "").padStart(2, "0");
+    const marker = `【截图 Step ${step}】`;
+    const selection = item.step === "Final" ? "【截图 Final】" : marker;
+    const caption = item.step === "Final" ? "最终画面" : `Step ${step} 截图`;
+    const insert = await execFileText(larkCli, [
+      "docs",
+      "+media-insert",
+      "--doc",
+      docUrl,
+      "--type",
+      "image",
+      "--file",
+      screenshotArg,
+      "--width",
+      "900",
+      "--caption",
+      caption,
+      "--selection-with-ellipsis",
+      selection
+    ], { timeout: 120000 });
+    if (insert.ok) {
+      uploaded += 1;
+    } else {
+      await appendLog(run, "issue", `飞书截图上传失败 ${selection}：${insert.stderr || insert.stdout || insert.error || "未知错误"}`);
+    }
+  }
+  await appendLog(run, "done", `飞书报告已生成：${docUrl}，已上传 ${uploaded} 张截图`);
+  return docUrl;
 }
 
 async function readVisionResult(run) {
@@ -1224,7 +1353,8 @@ async function readVisionResult(run) {
       reportFile: run.reportFile,
       logDir: run.dir,
       success: false,
-      steps: run.steps || 0
+      steps: run.steps || 0,
+      actionLog: []
     };
   }
   const result = JSON.parse(await fs.readFile(resultFile, "utf8"));
@@ -1258,7 +1388,9 @@ async function readVisionResult(run) {
     reportFile: result.reportFile || run.reportFile,
     logDir: result.logDir || run.dir,
     success: Boolean(result.success),
-    steps: actions.length
+    steps: actions.length,
+    actionLog: actions,
+    larkDocUrl: result.larkDocUrl || null
   };
 }
 
@@ -1392,9 +1524,20 @@ async function startVisionTask(config) {
         reportFile: run.reportFile,
         logDir: run.dir,
         success: false,
-        steps: run.steps
+        steps: run.steps,
+        actionLog: []
       };
     });
+    result.larkDocUrl = await createLarkReport(run, config, result).catch(async (error) => {
+      await appendLog(run, "issue", `飞书报告交付失败：${error.message}`);
+      return null;
+    });
+    if (result.larkDocUrl) {
+      const resultFile = path.join(run.dir, "result.json");
+      const saved = (await pathExists(resultFile)) ? JSON.parse(await fs.readFile(resultFile, "utf8")) : {};
+      saved.larkDocUrl = result.larkDocUrl;
+      await fs.writeFile(resultFile, JSON.stringify(saved, null, 2), "utf8").catch(() => {});
+    }
     finishRun(run, result.success ? "任务已完成" : (code === 2 ? "需要人工协助" : "任务未完整完成"), `${result.steps || run.steps} 步`, result, result.steps || run.steps);
   });
 
@@ -1469,3 +1612,4 @@ ipcMain.handle("task:humanDone", async () => {
 ipcMain.handle("image:dataUrl", async (_event, filePath) => imageDataUrl(filePath));
 ipcMain.handle("file:open", async (_event, filePath) => shell.openPath(filePath));
 ipcMain.handle("dir:open", async (_event, dirPath) => shell.openPath(dirPath));
+ipcMain.handle("url:open", async (_event, url) => shell.openExternal(url));
